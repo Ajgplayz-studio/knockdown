@@ -513,7 +513,7 @@ function stepPlayerPC(dt){
   const speed = (keys['ShiftLeft']||keys['ShiftRight'] ? 9.5 : 6) * S.scale;
   const f = new THREE.Vector3(
     (keys['KeyD']?1:0)-(keys['KeyA']?1:0), 0,
-    (keys['KeyW']?1:0)-(keys['KeyS']?1:0));
+    (keys['KeyS']?1:0)-(keys['KeyW']?1:0));
   if (f.lengthSq() > 0){
     f.normalize().applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
     rig.position.addScaledVector(f, speed*dt);
