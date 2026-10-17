@@ -102,8 +102,8 @@ if (location.hostname.indexOf('github.io') !== -1) {
     <div class="play">Click to play</div>
     <div class="keys">
       <b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Space</b> jump &nbsp; <b>Shift</b> sprint<br>
-      <b>Click</b> grab / throw &nbsp; <b>1</b> hands &nbsp; <b>2</b> blaster &nbsp; <b>Q</b> spawner gun &nbsp; <b>☰</b> lobby menu<br>
-      🥽 <b>VR button</b> (bottom-right) to enter VR on a headset
+      <b>Click</b> grab / throw &nbsp; <b>1</b> hands &nbsp; <b>2</b> blaster &nbsp; <b>Q</b> spawner gun<br>
+      <b>E</b> items &nbsp; <b>Tab</b> / <b>☰</b> menu &nbsp; 🥽 <b>VR button</b> (bottom-right) for VR
     </div>
   </div>
 </div>
@@ -601,6 +601,8 @@ addEventListener('keydown', e=>{
   keys[e.code] = true;
   if (!S.playing || S.xr) return;
   if (e.code === 'KeyQ'){ S.equipped === 'spawner' ? uiSpawn('hands') : uiSpawn('spawner'); }
+  if (e.code === 'KeyE') toggleMenu();
+  if (e.code === 'Tab'){ e.preventDefault(); toggleLobbyMenu(); }
   if (e.code === 'Digit1') uiSpawn('hands');
   if (e.code === 'Digit2') uiSpawn('blaster');
   if (e.code === 'KeyR' && S.held){ S.held.vel.set(0,1,0); dropHeld(); }
