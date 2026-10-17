@@ -628,10 +628,11 @@ const MENU = {
 const AMMO_KINDS = ['box','ball','barrel','cone','bot','runner','brute'];
 const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', bot:'👾', runner:'🏃', brute:'🦍' };
 function placeSpawnerGun(){
-  // PC: gun floats by the camera. VR: gun sits in the right hand.
+  // PC: gun floats by the camera. VR: gun rides the right hand's laser pointer,
+  // so the model, the laser, and the spawn ray all agree.
   if (S.xr){
-    ctrlGrip[1].add(spawner);
-    spawner.position.set(0, 0.02, -0.12);
+    ctrl[1].add(spawner);
+    spawner.position.set(0, -0.03, -0.1);
     spawner.rotation.set(0, 0, 0);
   } else {
     camera.add(spawner);
