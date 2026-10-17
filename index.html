@@ -61,6 +61,24 @@ if (location.hostname.indexOf('github.io') !== -1) {
     border:1px solid rgba(255,255,255,.15); color:#fff; font-size:13px; font-weight:600;
     padding:10px 16px; border-radius:10px; cursor:pointer; }
   #menubtn.hidden { display:none; }
+  /* ---------- lobby menu (PC) ---------- */
+  #lobbybtn { position:fixed; right:14px; top:12px; z-index:20; background:rgba(14,17,30,.9);
+    border:1px solid rgba(255,255,255,.15); color:#fff; font-size:18px; font-weight:700;
+    width:44px; height:44px; border-radius:10px; cursor:pointer; }
+  #lobbybtn.hidden { display:none; }
+  #lobbymenu { position:fixed; left:50%; top:50%; transform:translate(-50%,-50%); z-index:30;
+    background:rgba(14,17,30,.95); border:1px solid rgba(255,255,255,.12); border-radius:16px;
+    padding:18px; width:250px; color:#fff; }
+  #lobbymenu.hidden { display:none; }
+  #lobbymenu h3 { margin:0 0 12px; font-size:15px; letter-spacing:1px; color:#ffb27a;
+    text-transform:uppercase; text-align:center; }
+  #lobbymenu .lm { display:block; width:100%; background:rgba(255,255,255,.06);
+    border:1px solid rgba(255,255,255,.1); color:#fff; font-size:14px; font-weight:600;
+    padding:12px 8px; border-radius:10px; cursor:pointer; margin-bottom:8px; }
+  #lobbymenu .lm:hover { background:rgba(255,106,43,.35); }
+  #lobbymenu #lm-maplist.hidden { display:none; }
+  #lobbymenu #lm-maplist { margin-bottom:8px; }
+  #lobbymenu .lm.map { background:rgba(255,106,43,.18); border-color:#ff6a2b; }
   #toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:25;
     background:rgba(10,13,25,.9); color:#ffd9a8; font-size:13.5px; padding:9px 18px;
     border-radius:10px; border:1px solid rgba(255,178,122,.4); opacity:0; transition:opacity .25s;
@@ -83,7 +101,7 @@ if (location.hostname.indexOf('github.io') !== -1) {
     <div class="play">Click to play</div>
     <div class="keys">
       <b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Space</b> jump &nbsp; <b>Shift</b> sprint<br>
-      <b>Click</b> grab / throw &nbsp; <b>1</b> hands &nbsp; <b>2</b> blaster &nbsp; <b>Q</b> spawn menu<br>
+      <b>Click</b> grab / throw &nbsp; <b>1</b> hands &nbsp; <b>2</b> blaster &nbsp; <b>Q</b> spawn menu &nbsp; <b>☰</b> lobby menu<br>
       🥽 <b>VR button</b> (bottom-right) to enter VR on a headset
     </div>
   </div>
@@ -101,6 +119,17 @@ if (location.hostname.indexOf('github.io') !== -1) {
   <div class="hint">Props spawn in front of you.<br>Click a prop to grab it,<br>click again to throw.</div>
 </div>
 <button id="menubtn" class="hidden">📦 Spawn (Q)</button>
+<button id="lobbybtn" class="hidden">☰</button>
+<div id="lobbymenu" class="hidden">
+  <h3>☰ Menu</h3>
+  <button class="lm" id="lm-host">🖥️ Host (coming soon)</button>
+  <button class="lm" id="lm-join">🌐 Join Lobby (coming soon)</button>
+  <button class="lm" id="lm-maps">🗺️ Change Map</button>
+  <div id="lm-maplist" class="hidden">
+    <button class="lm map" data-map="sandbox">🗺️ Sandbox</button>
+  </div>
+  <button class="lm" id="lm-back">🚪 Back to Lobby</button>
+</div>
 
 <div id="hud" class="hidden">
   <div class="pill">🎯 <span id="hscore">0</span></div>
@@ -177,33 +206,37 @@ sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
 sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60;
 scene.add(sun);
 
-/* ============================== arena ============================== */
-const ARENA = 44;
-{
+/* ============================== maps: lobby + sandbox ============================== */
+const ARENA = 44;                 // sandbox half-size
+let mapGroup = null;            // holds the current map's static geometry
+S.map = 'lobby'; S.bounds = 9; S.menuMaps = false;
+function clearMapGroup(){ if (mapGroup){ scene.remove(mapGroup); mapGroup = null; } }
+
+function buildSandbox(){
   // ground with grid
   const g = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA*2+40, ARENA*2+40),
     new THREE.MeshStandardMaterial({ color:0x4a7c43, roughness:1 })
   );
-  g.rotation.x = -Math.PI/2; g.receiveShadow = true; scene.add(g);
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
   const grid = new THREE.GridHelper(ARENA*2+40, 64, 0xffffff, 0xffffff);
   grid.material.transparent = true; grid.material.opacity = 0.12;
-  grid.position.y = 0.02; scene.add(grid);
+  grid.position.y = 0.02; mapGroup.add(grid);
 
   // low boundary walls
   const wallMat = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.7 });
   const mkWall = (w,d,x,z)=>{
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, d), wallMat);
-    m.position.set(x, 0.8, z); m.castShadow = true; m.receiveShadow = true; scene.add(m);
+    m.position.set(x, 0.8, z); m.castShadow = true; m.receiveShadow = true; mapGroup.add(m);
   };
   mkWall(ARENA*2+4, 1, 0, -ARENA-1); mkWall(ARENA*2+4, 1, 0, ARENA+1);
   mkWall(1, ARENA*2+4, -ARENA-1, 0);  mkWall(1, ARENA*2+4, ARENA+1, 0);
 
   // a few static crates for cover / fun
   const crateMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 });
-  [[-12,-8,3],[10,-14,2.2],[-6,10,2.6],[16,8,3.4],[-18,14,2]].forEach(([x,z,s])=>{
-    const c = new THREE.Mesh(new THREE.BoxGeometry(s,s,s), crateMat);
-    c.position.set(x, s/2, z); c.castShadow = true; c.receiveShadow = true; scene.add(c);
+  [[-12,-8,3],[10,-14,2.2],[-6,10,2.6],[16,8,3.4],[-18,14,2]].forEach(([x,z,sz])=>{
+    const c = new THREE.Mesh(new THREE.BoxGeometry(sz,sz,sz), crateMat);
+    c.position.set(x, sz/2, z); c.castShadow = true; c.receiveShadow = true; mapGroup.add(c);
   });
 
   // floating "KNOCKDOWN" sign
@@ -215,7 +248,65 @@ const ARENA = 44;
   const tex = new THREE.CanvasTexture(cv);
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(22, 3.4),
     new THREE.MeshBasicMaterial({ map:tex, transparent:true }));
-  sign.position.set(0, 12, -ARENA+3); scene.add(sign);
+  sign.position.set(0, 12, -ARENA+3); mapGroup.add(sign);
+}
+
+function buildLobby(){
+  const L = 10;   // room half-size
+  // floor
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(L*2+2, L*2+2),
+    new THREE.MeshStandardMaterial({ color:0x2e3552, roughness:1 }));
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
+  const grid = new THREE.GridHelper(L*2+2, 22, 0x8f9bff, 0x8f9bff);
+  grid.material.transparent = true; grid.material.opacity = 0.1;
+  grid.position.y = 0.02; mapGroup.add(grid);
+  // walls with orange trim
+  const wallMat = new THREE.MeshStandardMaterial({ color:0x232842, roughness:.9 });
+  const trimMat = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.6 });
+  const mkWall = (w,d,x,z)=>{
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 5, d), wallMat);
+    m.position.set(x, 2.5, z); m.castShadow = true; m.receiveShadow = true; mapGroup.add(m);
+    const t = new THREE.Mesh(new THREE.BoxGeometry(w === 1 ? 1.2 : w, 0.25, d === 1 ? 1.2 : d), trimMat);
+    t.position.set(x, 5.05, z); mapGroup.add(t);
+  };
+  mkWall(L*2+2, 1, 0, -L-0.5); mkWall(L*2+2, 1, 0, L+0.5);
+  mkWall(1, L*2+2, -L-0.5, 0); mkWall(1, L*2+2, L+0.5, 0);
+  // big KNOCKDOWN sign on the back wall
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 300;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#141a30'; cx.fillRect(0,0,1024,300);
+  cx.textAlign = 'center';
+  cx.fillStyle = '#ff8c42'; cx.font = 'bold 104px sans-serif';
+  cx.fillText('🎯 KNOCKDOWN', 512, 138);
+  cx.fillStyle = '#8f9bff'; cx.font = 'bold 52px sans-serif';
+  cx.fillText('— LOBBY —', 512, 228);
+  const tex = new THREE.CanvasTexture(cv);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(11, 3.2),
+    new THREE.MeshBasicMaterial({ map:tex }));
+  sign.position.set(0, 3.1, -L+0.06); mapGroup.add(sign);
+  // a few static crates for decoration
+  const crateMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 });
+  [[-7,-7,1.6],[7.5,-6,2],[-7,7,1.8]].forEach(([x,z,sz])=>{
+    const c = new THREE.Mesh(new THREE.BoxGeometry(sz,sz,sz), crateMat);
+    c.position.set(x, sz/2, z); c.castShadow = true; c.receiveShadow = true; mapGroup.add(c);
+  });
+}
+
+function loadMap(name){
+  clearAll();
+  clearMapGroup();
+  mapGroup = new THREE.Group(); scene.add(mapGroup);
+  S.map = name;
+  yaw = 0; pitch = 0; rig.rotation.y = 0; camera.rotation.x = 0;
+  if (name === 'sandbox'){
+    S.bounds = ARENA; buildSandbox();
+    rig.position.set(0, 0, 14);
+  } else {
+    S.bounds = 9; buildLobby();
+    rig.position.set(0, 0, 6);
+  }
+  updateHUD(); renderLobbyMenu(); drawVRMenu();
+  toast(name === 'sandbox' ? '🗺️ Sandbox' : '👋 Welcome to the lobby');
 }
 
 /* ============================== spawn helpers ============================== */
@@ -330,8 +421,8 @@ function stepProps(dt){
     if (pos.y < r){ pos.y = r; if (p.vel.y < 0) p.vel.y *= -0.45;
       p.vel.x *= 0.92; p.vel.z *= 0.92;
       if (Math.abs(p.vel.y) < 0.4) p.vel.y = 0; }
-    if (Math.abs(pos.x) > ARENA){ pos.x = Math.sign(pos.x)*ARENA; p.vel.x *= -0.6; }
-    if (Math.abs(pos.z) > ARENA){ pos.z = Math.sign(pos.z)*ARENA; p.vel.z *= -0.6; }
+    if (Math.abs(pos.x) > S.bounds){ pos.x = Math.sign(pos.x)*S.bounds; p.vel.x *= -0.6; }
+    if (Math.abs(pos.z) > S.bounds){ pos.z = Math.sign(pos.z)*S.bounds; p.vel.z *= -0.6; }
   }
 }
 function stepShots(dt){
@@ -379,8 +470,8 @@ function stepEnemies(dt, playerPos){
       e.lastBump = (e.lastBump || 0) + dt;
       if (e.lastBump > 0.6){ e.lastBump = 0; beep(160, .07, 'sawtooth', .07); }
     }
-    if (Math.abs(e.mesh.position.x) > ARENA) e.mesh.position.x = Math.sign(e.mesh.position.x)*ARENA;
-    if (Math.abs(e.mesh.position.z) > ARENA) e.mesh.position.z = Math.sign(e.mesh.position.z)*ARENA;
+    if (Math.abs(e.mesh.position.x) > S.bounds) e.mesh.position.x = Math.sign(e.mesh.position.x)*S.bounds;
+    if (Math.abs(e.mesh.position.z) > S.bounds) e.mesh.position.z = Math.sign(e.mesh.position.z)*S.bounds;
   }
 }
 function stepBursts(dt){
@@ -447,6 +538,25 @@ function renderMenu(){
 function dropHeld(){
   if (S.held){ S.held.grabbedBy = null; S.held = null; }
 }
+
+/* ---------- lobby menu (PC) ---------- */
+function renderLobbyMenu(){
+  $('lm-back').style.display = S.map === 'lobby' ? 'none' : '';
+  $('lm-maplist').classList.toggle('hidden', !S.menuMaps);
+}
+function toggleLobbyMenu(force){
+  const m = $('lobbymenu');
+  const show = force !== undefined ? force : m.classList.contains('hidden');
+  m.classList.toggle('hidden', !show);
+  if (show){ renderLobbyMenu(); try{ document.exitPointerLock(); }catch(e){} }
+}
+$('lobbybtn').onclick = ()=> toggleLobbyMenu();
+$('lm-maps').onclick = ()=>{ S.menuMaps = !S.menuMaps; renderLobbyMenu(); };
+document.querySelectorAll('#lm-maplist .map').forEach(b=>{
+  b.onclick = ()=>{ loadMap(b.dataset.map); toggleLobbyMenu(false); };
+});
+$('lm-back').onclick = ()=>{ loadMap('lobby'); toggleLobbyMenu(false); };
+// Host / Join Lobby intentionally do nothing (coming soon)
 
 /* ============================== PC input ============================== */
 const keys = {};
@@ -523,8 +633,8 @@ function stepPlayerPC(dt){
   if (onGround && keys['Space']){ playerVel.y = 7.5*S.scale; onGround = false; }
   rig.position.y += playerVel.y*dt;
   if (rig.position.y <= 0){ rig.position.y = 0; playerVel.y = 0; onGround = true; }
-  rig.position.x = Math.max(-ARENA, Math.min(ARENA, rig.position.x));
-  rig.position.z = Math.max(-ARENA, Math.min(ARENA, rig.position.z));
+  rig.position.x = Math.max(-S.bounds, Math.min(S.bounds, rig.position.x));
+  rig.position.z = Math.max(-S.bounds, Math.min(S.bounds, rig.position.z));
   camera.position.y += ((1.7*S.scale) - camera.position.y) * Math.min(1, dt*6);
   // held prop follows the hands
   if (S.held && S.held.grabbedBy === 'pc'){
@@ -626,6 +736,77 @@ function vrPanelPress(c){
   }
   return false;
 }
+/* --- floating 3D lobby menu panel (VR — not HTML UI) --- */
+const menuPanel = new THREE.Group();
+const menuCanvas = document.createElement('canvas');
+menuCanvas.width = 512; menuCanvas.height = 500;
+const menuCtx = menuCanvas.getContext('2d');
+const menuTex = new THREE.CanvasTexture(menuCanvas);
+const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.12),
+  new THREE.MeshBasicMaterial({ map:menuTex, transparent:true, side:THREE.DoubleSide }));
+menuPanel.add(menuMesh);
+menuPanel.visible = false;
+scene.add(menuPanel);
+let menuHits = [];   // {x,y,w,h,kind}
+function drawVRMenu(){
+  const c = menuCtx;
+  c.clearRect(0,0,512,500);
+  c.fillStyle = 'rgba(12,15,28,.95)';
+  c.beginPath(); c.roundRect(0,0,512,500,28); c.fill();
+  c.fillStyle = '#ffb27a'; c.font = 'bold 30px sans-serif'; c.textAlign = 'center';
+  c.fillText('🎯 MENU', 256, 46);
+  menuHits = [];
+  const rows = [
+    { label:'🖥️ Host (coming soon)', kind:'host' },
+    { label:'🌐 Join Lobby (coming soon)', kind:'join' },
+    { label:'🗺️ Change Map', kind:'maps' },
+  ];
+  if (S.menuMaps) rows.push({ label:'▶ 🗺️ Sandbox', kind:'map:sandbox' });
+  if (S.map !== 'lobby') rows.push({ label:'🚪 Back to Lobby', kind:'back' });
+  rows.forEach((r, idx)=>{
+    const x = 16, y = 70 + idx*74, w = 480, h = 62;
+    c.fillStyle = r.kind.startsWith('map:') ? 'rgba(255,106,43,.3)' : 'rgba(255,255,255,.1)';
+    c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
+    if (r.kind.startsWith('map:')){ c.strokeStyle = '#ff6a2b'; c.lineWidth = 2;
+      c.beginPath(); c.roundRect(x,y,w,h,12); c.stroke(); }
+    c.fillStyle = '#fff'; c.font = '25px sans-serif';
+    c.fillText(r.label, 256, y+41);
+    menuHits.push({ x, y, w, h, kind:r.kind });
+  });
+  c.fillStyle = '#8b8e99'; c.font = '19px sans-serif';
+  c.fillText('trigger = select · A = close', 256, 478);
+  menuTex.needsUpdate = true;
+}
+function toggleVRMenu(){
+  menuPanel.visible = !menuPanel.visible;
+  if (menuPanel.visible){
+    drawVRMenu();
+    const p = new THREE.Vector3(); camera.getWorldPosition(p);
+    const d = new THREE.Vector3(); camera.getWorldDirection(d); d.y = 0; d.normalize();
+    menuPanel.position.copy(p).addScaledVector(d, 1.6);
+    menuPanel.position.y = p.y - 0.1;
+    menuPanel.lookAt(p.x, menuPanel.position.y, p.z);
+  }
+}
+function vrMenuPress(c){
+  if (!menuPanel.visible) return false;
+  const o = new THREE.Vector3(), d = new THREE.Vector3();
+  c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
+  vrRay.set(o, d);
+  const hit = vrRay.intersectObject(menuMesh, false)[0];
+  if (!hit) return false;
+  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 500;
+  for (const h of menuHits){
+    if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
+      if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; drawVRMenu(); beep(700,.05,'triangle',.08); }
+      else if (h.kind === 'map:sandbox'){ loadMap('sandbox'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      // host / join: coming soon — intentionally do nothing
+      return true;
+    }
+  }
+  return false;
+}
 let prevBtn = [[], []];
 function edgePressed(c, idx){
   const gp = c.userData.gamepad;
@@ -641,6 +822,7 @@ ctrl.forEach((c, i)=>{
   c.addEventListener('selectstart', ()=>{           // trigger
     if (!S.xr) return;
     if (vrPanelPress(c)) return;
+    if (vrMenuPress(c)) return;
     if (i === 1){ // right hand shoots
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
@@ -703,6 +885,8 @@ function stepVR(dt){
   }
   // B button (index 5) toggles spawn panel
   if (edgePressed(ctrl[1], 5)) toggleVRPanel();
+  // A button (index 4) toggles lobby menu panel
+  if (edgePressed(ctrl[1], 4)) toggleVRMenu();
   // held props follow their controller
   for (const p of S.props){
     if (p.grabbedBy && p.grabbedBy.isObject3D){
@@ -714,8 +898,8 @@ function stepVR(dt){
   }
   for (const c of ctrl) c.userData.prevPos.copy(c.userData.framePos);
   // VR player position = rig + headset offset (xz)
-  rig.position.x = Math.max(-ARENA, Math.min(ARENA, rig.position.x));
-  rig.position.z = Math.max(-ARENA, Math.min(ARENA, rig.position.z));
+  rig.position.x = Math.max(-S.bounds, Math.min(S.bounds, rig.position.x));
+  rig.position.z = Math.max(-S.bounds, Math.min(S.bounds, rig.position.z));
 }
 
 /* ============================== session / start ============================== */
@@ -726,6 +910,7 @@ function startPlay(){
   $('hud').classList.remove('hidden');
   $('cross').classList.remove('hidden');
   $('menubtn').classList.remove('hidden');
+  $('lobbybtn').classList.remove('hidden');
   renderMenu();
   updateHUD();
   try{ renderer.domElement.requestPointerLock(); }catch(e){}
@@ -733,7 +918,7 @@ function startPlay(){
   ['box','ball','barrel','cone'].forEach((k,i)=>{
     setTimeout(()=> addPropQuiet(k, i), 200 + i*150);
   });
-  toast('📦 Q opens the spawn menu — click a prop to grab it!');
+  toast('📦 Q = spawn menu · ☰ = lobby menu');
 }
 function addPropQuiet(kind, i){
   const p = addProp(kind);
@@ -747,9 +932,11 @@ renderer.xr.addEventListener('sessionstart', ()=>{
   ctrl.forEach((c,i)=>{ c.visible = true; ctrlGrip[i].visible = true; });
   $('title').classList.add('hidden');
   $('menu').classList.add('hidden'); $('menubtn').classList.add('hidden');
+  $('lobbybtn').classList.add('hidden'); $('lobbymenu').classList.add('hidden');
+  menuPanel.visible = false;
   $('hud').classList.remove('hidden'); $('cross').classList.add('hidden');
   panel.visible = false;
-  toast('🥽 VR mode — B opens the spawn panel, grip grabs, trigger shoots');
+  toast('🥽 VR — B spawn panel · A menu · grip grab · trigger shoot');
   setTimeout(()=> $('toast').style.opacity = 0, 4000);
 });
 renderer.xr.addEventListener('sessionend', ()=>{
@@ -761,8 +948,12 @@ renderer.xr.addEventListener('sessionend', ()=>{
   $('hud').classList.remove('hidden');
   $('cross').classList.remove('hidden');
   $('menubtn').classList.remove('hidden');
+  $('lobbybtn').classList.remove('hidden');
+  menuPanel.visible = false;
   renderMenu();
 });
+
+loadMap('lobby');   // start in the lobby
 
 /* ============================== main loop ============================== */
 const clock = new THREE.Clock();
