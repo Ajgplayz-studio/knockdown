@@ -377,6 +377,26 @@ function makeEnemy(type, at){
     p.position.set(sgn*r*0.35, r*0.25, r*0.95); g.add(p);
   });
   const p = at || spawnPoint(5);
+  // never spawn on top of the player: enforce a minimum distance, pushed out
+  // along the direction from the player (keeps the aimed direction for gun spawns)
+  {
+    const MIN_D = 6;
+    let dx = p.x - rig.position.x, dz = p.z - rig.position.z;
+    let dist = Math.hypot(dx, dz);
+    if (dist < MIN_D){
+      if (dist < 1e-4){
+        const fd = new THREE.Vector3();
+        camera.getWorldDirection(fd); fd.y = 0;
+        if (fd.lengthSq() < 1e-6) fd.set(0, 0, -1); else fd.normalize();
+        dx = fd.x; dz = fd.z; dist = 1;
+      }
+      dx /= dist; dz /= dist;
+      p.x = rig.position.x + dx * MIN_D;
+      p.z = rig.position.z + dz * MIN_D;
+      p.x = Math.max(-S.bounds, Math.min(S.bounds, p.x));
+      p.z = Math.max(-S.bounds, Math.min(S.bounds, p.z));
+    }
+  }
   g.position.set(p.x, r, p.z);
   scene.add(g);
   const bot = { mesh:g, body, t:Math.random()*10, r, type, icon:T.icon,
