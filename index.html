@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Knockdown</title>
+<meta name="description" content="Knockdown: single-player physics sandbox for VR (WebXR) and PC, in one file.">
+<script>
+// GitHub Pages is just a forwarder — the real site lives on Cloudflare.
+if (location.hostname.indexOf('github.io') !== -1) {
+  location.replace('https://knockdown.foxcorpgames.workers.dev/' + location.search + location.hash);
+}
+</script>
+<style>
+  html, body { margin:0; padding:0; height:100%; overflow:hidden; background:#0b0e1a;
+    font-family:"Segoe UI", system-ui, sans-serif; }
+  canvas { display:block; }
+  /* ---------- title screen ---------- */
+  #title { position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(900px 600px at 50% 30%, rgba(255,120,40,.18), transparent 70%), rgba(5,7,15,.88);
+    z-index:30; cursor:pointer; }
+  #title.hidden { display:none; }
+  .card { text-align:center; color:#fff; padding:36px 44px; background:rgba(20,24,40,.9);
+    border:1px solid rgba(255,255,255,.1); border-radius:20px; box-shadow:0 24px 80px rgba(0,0,0,.5);
+    max-width:min(460px, 92vw); }
+  .card .logo { font-size:52px; }
+  .card h1 { margin:6px 0 4px; font-size:32px; letter-spacing:1px; }
+  .card h1 span { background:linear-gradient(135deg,#ff8c42,#ff3d5a);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .card p { color:#a0a3ad; font-size:14px; margin:0 0 18px; }
+  .card .play { display:inline-block; background:#ff6a2b; color:#fff; font-weight:700; font-size:17px;
+    padding:13px 46px; border-radius:12px; }
+  .card .keys { margin-top:20px; font-size:12.5px; color:#8b8e99; line-height:1.9; text-align:left; }
+  .card .keys b { color:#d7d9e0; background:rgba(255,255,255,.08); border-radius:5px; padding:1px 7px; }
+  /* ---------- spawn menu (PC) ---------- */
+  #menu { position:fixed; left:14px; top:50%; transform:translateY(-50%); z-index:20;
+    background:rgba(14,17,30,.92); border:1px solid rgba(255,255,255,.12); border-radius:14px;
+    padding:12px; width:172px; color:#fff; }
+  #menu.hidden { display:none; }
+  #menu h3 { margin:0 0 8px; font-size:13px; letter-spacing:1px; color:#ffb27a; text-transform:uppercase; }
+  #menu .tabs { display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:8px; }
+  #menu .tab { background:rgba(255,255,255,.07); border:1px solid transparent; color:#cfd2da;
+    font-size:11.5px; padding:7px 4px; border-radius:8px; cursor:pointer; }
+  #menu .tab.on { background:rgba(255,106,43,.25); border-color:#ff6a2b; color:#fff; }
+  #menu .items { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+  #menu .it { background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); color:#fff;
+    font-size:12px; padding:9px 4px; border-radius:8px; cursor:pointer; }
+  #menu .it:hover { background:rgba(255,106,43,.35); }
+  #menu .hint { margin-top:8px; font-size:10.5px; color:#8b8e99; line-height:1.6; }
+  /* ---------- HUD ---------- */
+  #hud { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:15;
+    display:flex; gap:10px; pointer-events:none; }
+  #hud.hidden { display:none; }
+  .pill { background:rgba(10,13,25,.8); border:1px solid rgba(255,255,255,.12); color:#fff;
+    font-size:13px; font-weight:600; padding:7px 14px; border-radius:999px; }
+  #cross { position:fixed; left:50%; top:50%; width:6px; height:6px; margin:-3px;
+    background:#fff; border-radius:50%; opacity:.85; box-shadow:0 0 4px rgba(0,0,0,.6);
+    z-index:15; pointer-events:none; }
+  #cross.hidden { display:none; }
+  #menubtn { position:fixed; left:14px; bottom:14px; z-index:20; background:rgba(14,17,30,.9);
+    border:1px solid rgba(255,255,255,.15); color:#fff; font-size:13px; font-weight:600;
+    padding:10px 16px; border-radius:10px; cursor:pointer; }
+  #menubtn.hidden { display:none; }
+  #toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:25;
+    background:rgba(10,13,25,.9); color:#ffd9a8; font-size:13.5px; padding:9px 18px;
+    border-radius:10px; border:1px solid rgba(255,178,122,.4); opacity:0; transition:opacity .25s;
+    pointer-events:none; }
+</style>
+<script type="importmap">
+{ "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+
+<div id="title">
+  <div class="card">
+    <div class="logo">🎯</div>
+    <h1>KNOCKDOWN</h1>
+    <p>single-player physics sandbox &middot; VR + PC &middot; v1</p>
+    <div class="play">Click to play</div>
+    <div class="keys">
+      <b>WASD</b> move &nbsp; <b>Mouse</b> look &nbsp; <b>Space</b> jump &nbsp; <b>Shift</b> sprint<br>
+      <b>Click</b> grab / throw &nbsp; <b>1</b> hands &nbsp; <b>2</b> blaster &nbsp; <b>Q</b> spawn menu<br>
+      🥽 <b>VR button</b> (bottom-right) to enter VR on a headset
+    </div>
+  </div>
+</div>
+
+<div id="menu" class="hidden">
+  <h3>Spawn</h3>
+  <div class="tabs">
+    <button class="tab on" data-tab="weapons">🔫 Weapons</button>
+    <button class="tab" data-tab="props">📦 Props</button>
+    <button class="tab" data-tab="enemies">👾 Enemies</button>
+    <button class="tab" data-tab="powers">⚡ Powers</button>
+  </div>
+  <div class="items" id="menuitems"></div>
+  <div class="hint">Props spawn in front of you.<br>Click a prop to grab it,<br>click again to throw.</div>
+</div>
+<button id="menubtn" class="hidden">📦 Spawn (Q)</button>
+
+<div id="hud" class="hidden">
+  <div class="pill">🎯 <span id="hscore">0</span></div>
+  <div class="pill">👾 <span id="henemies">0</span></div>
+  <div class="pill">📦 <span id="hprops">0</span></div>
+  <div class="pill" id="hgrav">🌍 normal-g</div>
+</div>
+<div id="cross" class="hidden"></div>
+<div id="toast"></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { VRButton } from 'three/addons/webxr/VRButton.js';
+
+/* ============================== state ============================== */
+const S = {
+  playing:false, xr:false,
+  gravity:9.8, lowG:false,
+  scale:1,                       // player size multiplier (grow/shrink)
+  equipped:'hands',              // 'hands' | 'blaster'
+  score:0, held:null,
+  props:[], shots:[], enemies:[], bursts:[],
+  menuCat:'weapons',
+};
+
+/* ============================== audio (tiny synth) ============================== */
+let AC = null;
+function beep(freq, dur=0.08, type='square', vol=0.12){
+  try{
+    AC = AC || new (window.AudioContext||window.webkitAudioContext)();
+    const o = AC.createOscillator(), g = AC.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, AC.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+    o.connect(g); g.connect(AC.destination);
+    o.start(); o.stop(AC.currentTime + dur);
+  }catch(e){}
+}
+const sfx = {
+  shoot(){ beep(880, .09, 'sawtooth', .1); beep(440, .12, 'square', .06); },
+  pop(){ beep(520, .06, 'square', .12); setTimeout(()=>beep(780,.08,'square',.1), 60); },
+  grab(){ beep(300, .05, 'sine', .1); },
+  spawn(){ beep(660, .05, 'triangle', .08); },
+  power(){ beep(220, .15, 'sawtooth', .1); setTimeout(()=>beep(440,.15,'sawtooth',.08), 120); },
+};
+
+/* ============================== renderer / scene ============================== */
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.xr.enabled = true;
+document.body.appendChild(renderer.domElement);
+document.body.appendChild(VRButton.createButton(renderer));
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fc3ee);
+scene.fog = new THREE.Fog(0x8fc3ee, 45, 150);
+
+const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 400);
+camera.position.y = 1.7;
+const rig = new THREE.Group();          // player rig: moved by WASD (PC) or thumbstick (VR)
+rig.add(camera);
+rig.position.set(0, 0, 14);
+scene.add(rig);
+
+scene.add(new THREE.HemisphereLight(0xbfd9ff, 0x3a4a2f, 0.9));
+const sun = new THREE.DirectionalLight(0xfff2d9, 1.6);
+sun.position.set(30, 50, 20);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -60; sun.shadow.camera.right = 60;
+sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60;
+scene.add(sun);
+
+/* ============================== arena ============================== */
+const ARENA = 44;
+{
+  // ground with grid
+  const g = new THREE.Mesh(
+    new THREE.PlaneGeometry(ARENA*2+40, ARENA*2+40),
+    new THREE.MeshStandardMaterial({ color:0x4a7c43, roughness:1 })
+  );
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; scene.add(g);
+  const grid = new THREE.GridHelper(ARENA*2+40, 64, 0xffffff, 0xffffff);
+  grid.material.transparent = true; grid.material.opacity = 0.12;
+  grid.position.y = 0.02; scene.add(grid);
+
+  // low boundary walls
+  const wallMat = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.7 });
+  const mkWall = (w,d,x,z)=>{
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, d), wallMat);
+    m.position.set(x, 0.8, z); m.castShadow = true; m.receiveShadow = true; scene.add(m);
+  };
+  mkWall(ARENA*2+4, 1, 0, -ARENA-1); mkWall(ARENA*2+4, 1, 0, ARENA+1);
+  mkWall(1, ARENA*2+4, -ARENA-1, 0);  mkWall(1, ARENA*2+4, ARENA+1, 0);
+
+  // a few static crates for cover / fun
+  const crateMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 });
+  [[-12,-8,3],[10,-14,2.2],[-6,10,2.6],[16,8,3.4],[-18,14,2]].forEach(([x,z,s])=>{
+    const c = new THREE.Mesh(new THREE.BoxGeometry(s,s,s), crateMat);
+    c.position.set(x, s/2, z); c.castShadow = true; c.receiveShadow = true; scene.add(c);
+  });
+
+  // floating "KNOCKDOWN" sign
+  const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 160;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#10141f'; cx.fillRect(0,0,1024,160);
+  cx.font = 'bold 92px sans-serif'; cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  cx.fillStyle = '#ff8c42'; cx.fillText('🎯 KNOCKDOWN', 512, 84);
+  const tex = new THREE.CanvasTexture(cv);
+  const sign = new THREE.Mesh(new THREE.PlaneGeometry(22, 3.4),
+    new THREE.MeshBasicMaterial({ map:tex, transparent:true }));
+  sign.position.set(0, 12, -ARENA+3); scene.add(sign);
+}
+
+/* ============================== spawn helpers ============================== */
+const propMats = {
+  box:    new THREE.MeshStandardMaterial({ color:0x3b82f6, roughness:.6 }),
+  ball:   new THREE.MeshStandardMaterial({ color:0xef4444, roughness:.4 }),
+  barrel: new THREE.MeshStandardMaterial({ color:0x22c55e, roughness:.5, metalness:.3 }),
+  cone:   new THREE.MeshStandardMaterial({ color:0xf59e0b, roughness:.6 }),
+};
+function spawnPoint(dist=3.2){
+  const p = new THREE.Vector3();
+  camera.getWorldPosition(p);
+  const d = new THREE.Vector3(); camera.getWorldDirection(d); d.y = 0; d.normalize();
+  p.addScaledVector(d, dist); p.y = Math.max(1.1, camera.position.y);
+  return p;
+}
+function addProp(kind){
+  let mesh, radius;
+  if (kind === 'ball'){ mesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 20, 16), propMats.ball); radius = 0.45; }
+  else if (kind === 'barrel'){ mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 18), propMats.barrel); radius = 0.55; }
+  else if (kind === 'cone'){ mesh = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.1, 18), propMats.cone); radius = 0.55; }
+  else { mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), propMats.box); radius = 0.55; }
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  const p = spawnPoint();
+  mesh.position.copy(p);
+  mesh.rotation.y = Math.random()*Math.PI;
+  scene.add(mesh);
+  const prop = { mesh, vel:new THREE.Vector3((Math.random()-.5)*2, 2, (Math.random()-.5)*2), radius, kind, grabbedBy:null };
+  S.props.push(prop);
+  sfx.spawn(); updateHUD();
+  return prop;
+}
+function makeBot(){
+  const g = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 16),
+    new THREE.MeshStandardMaterial({ color:0xdc2626, roughness:.5 }));
+  body.castShadow = true; g.add(body);
+  const eyeMat = new THREE.MeshBasicMaterial({ color:0xffffff });
+  const pupMat = new THREE.MeshBasicMaterial({ color:0x111111 });
+  [-0.2, 0.2].forEach(x=>{
+    const e = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10), eyeMat);
+    e.position.set(x, 0.15, 0.44); g.add(e);
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), pupMat);
+    p.position.set(x, 0.15, 0.56); g.add(p);
+  });
+  const p = spawnPoint(5);
+  g.position.set(p.x, 0.55, p.z);
+  scene.add(g);
+  const bot = { mesh:g, t:Math.random()*10, speed:2.6 + Math.random()*1.4 };
+  S.enemies.push(bot);
+  sfx.spawn(); updateHUD();
+  return bot;
+}
+function killBot(bot){
+  const i = S.enemies.indexOf(bot);
+  if (i >= 0) S.enemies.splice(i, 1);
+  burst(bot.mesh.position.clone(), 0xdc2626);
+  scene.remove(bot.mesh);
+  S.score += 1; sfx.pop(); updateHUD();
+  toast('👾 Bot popped!  +' + 1);
+}
+function burst(pos, color){
+  const geo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
+  const mat = new THREE.MeshBasicMaterial({ color });
+  for (let i = 0; i < 10; i++){
+    const m = new THREE.Mesh(geo, mat);
+    m.position.copy(pos);
+    scene.add(m);
+    S.bursts.push({ mesh:m, life:0.5,
+      vel:new THREE.Vector3((Math.random()-.5)*9, Math.random()*8+2, (Math.random()-.5)*9) });
+  }
+}
+function fireShot(origin, dir, speed=34){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10),
+    new THREE.MeshBasicMaterial({ color:0x7df9ff }));
+  const glow = new THREE.PointLight(0x7df9ff, 6, 6);
+  m.add(glow);
+  m.position.copy(origin).addScaledVector(dir, 0.8);
+  scene.add(m);
+  S.shots.push({ mesh:m, vel:dir.clone().multiplyScalar(speed), life:2.5 });
+  sfx.shoot();
+}
+
+/* ============================== blaster (held gun, PC) ============================== */
+const blaster = new THREE.Group();
+{
+  const bodyM = new THREE.MeshStandardMaterial({ color:0x23262e, roughness:.4, metalness:.5 });
+  const accM = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.4, emissive:0xff6a2b, emissiveIntensity:.6 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.14, 0.42), bodyM); blaster.add(body);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 12), bodyM);
+  barrel.rotation.x = Math.PI/2; barrel.position.set(0, 0.03, -0.3); blaster.add(barrel);
+  const tip = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), accM);
+  tip.position.set(0, 0.03, -0.46); blaster.add(tip);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), bodyM);
+  grip.position.set(0, -0.14, 0.08); grip.rotation.x = 0.3; blaster.add(grip);
+  blaster.position.set(0.3, -0.26, -0.55);
+  blaster.rotation.y = 0.08;
+  blaster.visible = false;
+  camera.add(blaster);
+}
+
+/* ============================== physics step ============================== */
+function stepProps(dt){
+  const g = S.gravity;
+  for (const p of S.props){
+    if (p.grabbedBy) continue;
+    p.vel.y -= g * dt;
+    p.mesh.position.addScaledVector(p.vel, dt);
+    // spin a little while flying
+    if (p.vel.lengthSq() > 1){ p.mesh.rotation.x += dt*1.5; p.mesh.rotation.z += dt*1.1; }
+    const r = p.radius, pos = p.mesh.position;
+    if (pos.y < r){ pos.y = r; if (p.vel.y < 0) p.vel.y *= -0.45;
+      p.vel.x *= 0.92; p.vel.z *= 0.92;
+      if (Math.abs(p.vel.y) < 0.4) p.vel.y = 0; }
+    if (Math.abs(pos.x) > ARENA){ pos.x = Math.sign(pos.x)*ARENA; p.vel.x *= -0.6; }
+    if (Math.abs(pos.z) > ARENA){ pos.z = Math.sign(pos.z)*ARENA; p.vel.z *= -0.6; }
+  }
+}
+function stepShots(dt){
+  for (let i = S.shots.length-1; i >= 0; i--){
+    const s = S.shots[i];
+    s.life -= dt;
+    s.mesh.position.addScaledVector(s.vel, dt);
+    let dead = s.life <= 0 || s.mesh.position.y < 0;
+    if (!dead){
+      // vs enemies
+      for (let j = S.enemies.length-1; j >= 0; j--){
+        const e = S.enemies[j];
+        if (s.mesh.position.distanceToSquared(e.mesh.position) < 1.1){ killBot(e); dead = true; break; }
+      }
+    }
+    if (!dead){
+      // vs props: knock them flying
+      for (const p of S.props){
+        if (p.grabbedBy) continue;
+        const rr = p.radius + 0.2;
+        if (s.mesh.position.distanceToSquared(p.mesh.position) < rr*rr){
+          p.vel.addScaledVector(s.vel, 0.045);
+          p.vel.y += 3;
+          burst(s.mesh.position.clone(), 0x7df9ff);
+          dead = true; break;
+        }
+      }
+    }
+    if (dead){ scene.remove(s.mesh); S.shots.splice(i, 1); }
+  }
+}
+function stepEnemies(dt, playerPos){
+  for (let i = S.enemies.length-1; i >= 0; i--){
+    const e = S.enemies[i];
+    e.t += dt;
+    const to = new THREE.Vector3().subVectors(playerPos, e.mesh.position); to.y = 0;
+    const dist = to.length();
+    if (dist > 0.01){ to.normalize(); e.mesh.position.addScaledVector(to, Math.min(e.speed*dt, dist)); }
+    e.mesh.position.y = 0.55 + Math.abs(Math.sin(e.t*7))*0.28;   // hop
+    e.mesh.rotation.y = Math.atan2(to.x, to.z);
+    // bump the player when close
+    if (dist < 1.8 && !S.xr){
+      const away = new THREE.Vector3().subVectors(playerPos, e.mesh.position).setY(0).normalize();
+      rig.position.addScaledVector(away, 3.2*dt);
+      e.lastBump = (e.lastBump || 0) + dt;
+      if (e.lastBump > 0.6){ e.lastBump = 0; beep(160, .07, 'sawtooth', .07); }
+    }
+    if (Math.abs(e.mesh.position.x) > ARENA) e.mesh.position.x = Math.sign(e.mesh.position.x)*ARENA;
+    if (Math.abs(e.mesh.position.z) > ARENA) e.mesh.position.z = Math.sign(e.mesh.position.z)*ARENA;
+  }
+}
+function stepBursts(dt){
+  for (let i = S.bursts.length-1; i >= 0; i--){
+    const b = S.bursts[i];
+    b.life -= dt;
+    b.vel.y -= 12*dt;
+    b.mesh.position.addScaledVector(b.vel, dt);
+    b.mesh.rotation.x += dt*6;
+    if (b.life <= 0){ scene.remove(b.mesh); S.bursts.splice(i, 1); }
+  }
+}
+
+/* ============================== HUD / toast / menu (PC) ============================== */
+const $ = id => document.getElementById(id);
+function updateHUD(){
+  $('hscore').textContent = S.score;
+  $('henemies').textContent = S.enemies.length;
+  $('hprops').textContent = S.props.length;
+  $('hgrav').textContent = S.lowG ? '🌙 low-g' : '🌍 normal-g';
+}
+let toastT = null;
+function toast(msg){
+  const t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(toastT); toastT = setTimeout(()=> t.style.opacity = 0, 1800);
+}
+const MENU = {
+  weapons:[ ['blaster','🔫 Blaster'], ['hands','✋ Hands'] ],
+  props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'] ],
+  enemies:[ ['bot','👾 Bot'] ],
+  powers:[ ['lowg','🌙 Low-G'], ['grow','🔍 Grow'], ['shrink','🔎 Shrink'], ['clear','🧹 Clear'] ],
+};
+function uiSpawn(kind){
+  if (kind === 'blaster'){ S.equipped = 'blaster'; blaster.visible = true; dropHeld(); toast('🔫 Blaster equipped — click to shoot'); }
+  else if (kind === 'hands'){ S.equipped = 'hands'; blaster.visible = false; toast('✋ Hands — click a prop to grab it'); }
+  else if (kind === 'lowg'){ S.lowG = !S.lowG; S.gravity = S.lowG ? 2.6 : 9.8; sfx.power();
+    toast(S.lowG ? '🌙 Low gravity ON' : '🌍 Normal gravity'); updateHUD(); }
+  else if (kind === 'grow'){ S.scale = Math.min(2.2, S.scale*1.4); sfx.power(); toast('🔍 You grew!'); }
+  else if (kind === 'shrink'){ S.scale = Math.max(0.45, S.scale/1.4); sfx.power(); toast('🔎 You shrank!'); }
+  else if (kind === 'clear'){ clearAll(); toast('🧹 Arena cleared'); }
+  else if (kind === 'bot'){ makeBot(); }
+  else { addProp(kind); }
+}
+function clearAll(){
+  for (const p of S.props) scene.remove(p.mesh);
+  for (const e of S.enemies) scene.remove(e.mesh);
+  for (const s of S.shots) scene.remove(s.mesh);
+  S.props.length = 0; S.enemies.length = 0; S.shots.length = 0;
+  dropHeld(); updateHUD();
+}
+function renderMenu(){
+  const box = $('menuitems'); box.innerHTML = '';
+  for (const [kind, label] of MENU[S.menuCat]){
+    const b = document.createElement('button');
+    b.className = 'it'; b.textContent = label;
+    b.onclick = ()=> uiSpawn(kind);
+    box.appendChild(b);
+  }
+  document.querySelectorAll('#menu .tab').forEach(t=>{
+    t.classList.toggle('on', t.dataset.tab === S.menuCat);
+    t.onclick = ()=>{ S.menuCat = t.dataset.tab; renderMenu(); };
+  });
+}
+function dropHeld(){
+  if (S.held){ S.held.grabbedBy = null; S.held = null; }
+}
+
+/* ============================== PC input ============================== */
+const keys = {};
+addEventListener('keydown', e=>{
+  keys[e.code] = true;
+  if (!S.playing || S.xr) return;
+  if (e.code === 'KeyQ') toggleMenu();
+  if (e.code === 'Digit1') uiSpawn('hands');
+  if (e.code === 'Digit2') uiSpawn('blaster');
+  if (e.code === 'KeyR' && S.held){ S.held.vel.set(0,1,0); dropHeld(); }
+});
+addEventListener('keyup', e=> keys[e.code] = false);
+addEventListener('contextmenu', e=> e.preventDefault());
+function toggleMenu(force){
+  const m = $('menu');
+  const show = force !== undefined ? force : m.classList.contains('hidden');
+  m.classList.toggle('hidden', !show);
+  $('menubtn').classList.toggle('hidden', show);
+}
+$('menubtn').onclick = ()=> toggleMenu(true);
+
+let yaw = 0, pitch = 0;
+addEventListener('mousemove', e=>{
+  if (document.pointerLockElement !== renderer.domElement || !S.playing || S.xr) return;
+  yaw -= e.movementX * 0.0022;
+  pitch -= e.movementY * 0.0022;
+  pitch = Math.max(-1.45, Math.min(1.45, pitch));
+  rig.rotation.y = yaw;
+  camera.rotation.x = pitch;
+});
+const ray = new THREE.Raycaster();
+function pickProp(maxDist=7){
+  ray.setFromCamera({ x:0, y:0 }, camera);
+  const meshes = S.props.filter(p=>!p.grabbedBy).map(p=>p.mesh);
+  const hits = ray.intersectObjects(meshes, false);
+  if (!hits.length || hits[0].distance > maxDist) return null;
+  return S.props.find(p=> p.mesh === hits[0].object);
+}
+renderer.domElement.addEventListener('mousedown', e=>{
+  if (!S.playing || S.xr || document.pointerLockElement !== renderer.domElement) return;
+  if (e.button === 0){ // left click: shoot / grab / throw
+    if (S.equipped === 'blaster'){
+      const d = new THREE.Vector3(); camera.getWorldDirection(d);
+      const o = new THREE.Vector3(); camera.getWorldPosition(o);
+      fireShot(o, d);
+      blasterKick = 1;
+    } else if (S.held){
+      const d = new THREE.Vector3(); camera.getWorldDirection(d);
+      S.held.grabbedBy = null;
+      S.held.vel.copy(d).multiplyScalar(17 * S.scale);
+      S.held.vel.y += 2.5;
+      S.held = null; sfx.grab();
+    } else {
+      const p = pickProp();
+      if (p){ p.grabbedBy = 'pc'; S.held = p; p.vel.set(0,0,0); sfx.grab(); }
+    }
+  }
+});
+let blasterKick = 0;
+
+const playerVel = new THREE.Vector3();
+let onGround = true;
+function stepPlayerPC(dt){
+  const speed = (keys['ShiftLeft']||keys['ShiftRight'] ? 9.5 : 6) * S.scale;
+  const f = new THREE.Vector3(
+    (keys['KeyD']?1:0)-(keys['KeyA']?1:0), 0,
+    (keys['KeyW']?1:0)-(keys['KeyS']?1:0));
+  if (f.lengthSq() > 0){
+    f.normalize().applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
+    rig.position.addScaledVector(f, speed*dt);
+  }
+  // jump + gravity
+  playerVel.y -= 22*dt;
+  if (onGround && keys['Space']){ playerVel.y = 7.5*S.scale; onGround = false; }
+  rig.position.y += playerVel.y*dt;
+  if (rig.position.y <= 0){ rig.position.y = 0; playerVel.y = 0; onGround = true; }
+  rig.position.x = Math.max(-ARENA, Math.min(ARENA, rig.position.x));
+  rig.position.z = Math.max(-ARENA, Math.min(ARENA, rig.position.z));
+  camera.position.y += ((1.7*S.scale) - camera.position.y) * Math.min(1, dt*6);
+  // held prop follows the hands
+  if (S.held && S.held.grabbedBy === 'pc'){
+    const o = new THREE.Vector3(); camera.getWorldPosition(o);
+    const d = new THREE.Vector3(); camera.getWorldDirection(d);
+    S.held.mesh.position.copy(o).addScaledVector(d, 1.7*S.scale).add(new THREE.Vector3(0,-0.25*S.scale,0));
+    S.held.mesh.rotation.y += dt*2;
+  }
+  // blaster recoil
+  if (blasterKick > 0){ blasterKick = Math.max(0, blasterKick - dt*7);
+    blaster.position.z = -0.55 + blasterKick*0.09; }
+  else blaster.position.z = -0.55;
+}
+
+/* ============================== VR ============================== */
+const ctrl = [ renderer.xr.getController(0), renderer.xr.getController(1) ];
+const ctrlGrip = [ renderer.xr.getControllerGrip(0), renderer.xr.getControllerGrip(1) ];
+const laserMat = new THREE.LineBasicMaterial({ color:0x7df9ff, transparent:true, opacity:.7 });
+ctrl.forEach((c, i)=>{
+  const geo = new THREE.BufferGeometry().setFromPoints([ new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-4) ]);
+  c.add(new THREE.Line(geo, laserMat));
+  // little controller nub so you can see your hands
+  const nub = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10),
+    new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.4 }));
+  ctrlGrip[i].add(nub);
+  rig.add(c); rig.add(ctrlGrip[i]);
+  c.visible = false; ctrlGrip[i].visible = false;   // hidden until a VR session starts
+});
+
+/* --- floating 3D spawn panel (VR menu) --- */
+const panel = new THREE.Group();
+const panelCanvas = document.createElement('canvas');
+panelCanvas.width = 512; panelCanvas.height = 420;
+const panelCtx = panelCanvas.getContext('2d');
+const panelTex = new THREE.CanvasTexture(panelCanvas);
+const panelMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.95),
+  new THREE.MeshBasicMaterial({ map:panelTex, transparent:true, side:THREE.DoubleSide }));
+panel.add(panelMesh);
+panel.visible = false;
+scene.add(panel);
+let panelHits = [];   // {x,y,w,h,kind}
+function drawPanel(){
+  const c = panelCtx;
+  c.clearRect(0,0,512,420);
+  c.fillStyle = 'rgba(12,15,28,.95)';
+  c.beginPath(); c.roundRect(0,0,512,420,28); c.fill();
+  c.fillStyle = '#ffb27a'; c.font = 'bold 30px sans-serif'; c.textAlign = 'center';
+  c.fillText('🎯 SPAWN', 256, 44);
+  panelHits = [];
+  const cats = Object.keys(MENU);
+  cats.forEach((cat, i)=>{
+    const x = 14 + i*122, y = 60, w = 114, h = 44;
+    c.fillStyle = cat === S.menuCat ? '#ff6a2b' : 'rgba(255,255,255,.12)';
+    c.beginPath(); c.roundRect(x,y,w,h,10); c.fill();
+    c.fillStyle = '#fff'; c.font = '20px sans-serif';
+    c.fillText({weapons:'🔫',props:'📦',enemies:'👾',powers:'⚡'}[cat], x+w/2, y+29);
+    panelHits.push({ x, y, w, h, kind:'__tab:'+cat });
+  });
+  MENU[S.menuCat].forEach(([kind, label], i)=>{
+    const x = 14 + (i%2)*242, y = 120 + Math.floor(i/2)*78, w = 228, h = 64;
+    c.fillStyle = 'rgba(255,255,255,.1)';
+    c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
+    c.fillStyle = '#fff'; c.font = '24px sans-serif';
+    c.fillText(label, x+w/2, y+41);
+    panelHits.push({ x, y, w, h, kind });
+  });
+  c.fillStyle = '#8b8e99'; c.font = '19px sans-serif';
+  c.fillText('trigger = spawn · B = close', 256, 392);
+  panelTex.needsUpdate = true;
+}
+function toggleVRPanel(){
+  panel.visible = !panel.visible;
+  if (panel.visible){
+    drawPanel();
+    const p = new THREE.Vector3(); camera.getWorldPosition(p);
+    const d = new THREE.Vector3(); camera.getWorldDirection(d); d.y = 0; d.normalize();
+    panel.position.copy(p).addScaledVector(d, 1.6);
+    panel.position.y = p.y - 0.15;
+    panel.lookAt(p.x, panel.position.y, p.z);
+  }
+}
+const vrRay = new THREE.Raycaster();
+function vrPanelPress(c){
+  if (!panel.visible) return false;
+  // ray from the controller along its -Z (pointing) direction
+  const o = new THREE.Vector3(), d = new THREE.Vector3();
+  c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
+  vrRay.set(o, d);
+  const hit = vrRay.intersectObject(panelMesh, false)[0];
+  if (!hit) return false;
+  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 420;
+  for (const h of panelHits){
+    if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
+      if (h.kind.startsWith('__tab:')){ S.menuCat = h.kind.slice(6); drawPanel(); }
+      else { uiSpawn(h.kind); drawPanel(); }
+      beep(700, .05, 'triangle', .08);
+      return true;
+    }
+  }
+  return false;
+}
+let prevBtn = [[], []];
+function edgePressed(c, idx){
+  const gp = c.userData.gamepad;
+  if (!gp) return false;
+  const now = !!gp.buttons[idx] && gp.buttons[idx].pressed;
+  const was = prevBtn[c.userData.i][idx] || false;
+  prevBtn[c.userData.i][idx] = now;
+  return now && !was;
+}
+ctrl.forEach((c, i)=>{
+  c.userData.i = i;
+  c.addEventListener('connected', e=>{ c.userData.gamepad = e.data.gamepad; });
+  c.addEventListener('selectstart', ()=>{           // trigger
+    if (!S.xr) return;
+    if (vrPanelPress(c)) return;
+    if (i === 1){ // right hand shoots
+      const o = new THREE.Vector3(), d = new THREE.Vector3();
+      c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
+      fireShot(o, d);
+    }
+  });
+  c.addEventListener('squeezestart', ()=>{          // grip: grab
+    if (!S.xr) return;
+    const cp = new THREE.Vector3(); c.getWorldPosition(cp);
+    let best = null, bd = 1.4;
+    for (const p of S.props){
+      if (p.grabbedBy) continue;
+      const d = p.mesh.position.distanceTo(cp);
+      if (d < bd){ bd = d; best = p; }
+    }
+    if (best){ best.grabbedBy = c; best.vel.set(0,0,0); sfx.grab(); }
+  });
+  c.addEventListener('squeezeend', ()=>{            // release grip: throw
+    if (!S.xr) return;
+    for (const p of S.props){
+      if (p.grabbedBy === c){
+        p.grabbedBy = null;
+        const now = new THREE.Vector3(); c.getWorldPosition(now);
+        const prev = c.userData.prevPos || now.clone();
+        const throwV = now.clone().sub(prev).multiplyScalar(28);
+        throwV.y = Math.max(throwV.y, 1.5);
+        if (throwV.length() > 26) throwV.setLength(26);
+        p.vel.copy(throwV);
+        c.userData.prevPos = null;
+      }
+    }
+  });
+});
+let snapReady = true;
+function stepVR(dt){
+  // track controller velocity for throws
+  for (const c of ctrl){
+    const now = new THREE.Vector3(); c.getWorldPosition(now);
+    c.userData.prevPos = c.userData.prevPos || now.clone();
+    c.userData.framePos = now;
+  }
+  const L = ctrl[0].userData.gamepad, R = ctrl[1].userData.gamepad;
+  // left thumbstick: smooth locomotion, relative to headset yaw
+  if (L && L.axes.length >= 4){
+    const ax = L.axes[2], az = L.axes[3];
+    if (Math.abs(ax) > 0.12 || Math.abs(az) > 0.12){
+      const dir = new THREE.Quaternion(); camera.getWorldQuaternion(dir);
+      const e = new THREE.Euler().setFromQuaternion(dir, 'YXZ');
+      const fwd = new THREE.Vector3(-Math.sin(e.y), 0, -Math.cos(e.y));
+      const rgt = new THREE.Vector3(-fwd.z, 0, fwd.x);
+      rig.position.addScaledVector(fwd, -az * 5 * S.scale * dt);
+      rig.position.addScaledVector(rgt, ax * 5 * S.scale * dt);
+    }
+  }
+  // right thumbstick: snap turn
+  if (R && R.axes.length >= 4){
+    const sx = R.axes[2];
+    if (Math.abs(sx) > 0.6 && snapReady){ rig.rotation.y -= Math.sign(sx) * Math.PI/6; snapReady = false; }
+    if (Math.abs(sx) < 0.3) snapReady = true;
+  }
+  // B button (index 5) toggles spawn panel
+  if (edgePressed(ctrl[1], 5)) toggleVRPanel();
+  // held props follow their controller
+  for (const p of S.props){
+    if (p.grabbedBy && p.grabbedBy.isObject3D){
+      const c = p.grabbedBy;
+      const cp = new THREE.Vector3(); c.getWorldPosition(cp);
+      const cd = new THREE.Vector3(); c.getWorldDirection(cd); cd.negate();
+      p.mesh.position.copy(cp).addScaledVector(cd, 0.35);
+    }
+  }
+  for (const c of ctrl) c.userData.prevPos.copy(c.userData.framePos);
+  // VR player position = rig + headset offset (xz)
+  rig.position.x = Math.max(-ARENA, Math.min(ARENA, rig.position.x));
+  rig.position.z = Math.max(-ARENA, Math.min(ARENA, rig.position.z));
+}
+
+/* ============================== session / start ============================== */
+function startPlay(){
+  if (S.playing) return;
+  S.playing = true;
+  $('title').classList.add('hidden');
+  $('hud').classList.remove('hidden');
+  $('cross').classList.remove('hidden');
+  $('menubtn').classList.remove('hidden');
+  renderMenu();
+  updateHUD();
+  try{ renderer.domElement.requestPointerLock(); }catch(e){}
+  // starter props so the arena isn't empty
+  ['box','ball','barrel','cone'].forEach((k,i)=>{
+    setTimeout(()=> addPropQuiet(k, i), 200 + i*150);
+  });
+  toast('📦 Q opens the spawn menu — click a prop to grab it!');
+}
+function addPropQuiet(kind, i){
+  const p = addProp(kind);
+  const a = (i/4)*Math.PI*2 + 0.6;
+  p.mesh.position.set(Math.sin(a)*7, 1.2, Math.cos(a)*7 - 2);
+  p.vel.set(0,0,0);
+}
+$('title').addEventListener('click', startPlay);
+renderer.xr.addEventListener('sessionstart', ()=>{
+  S.xr = true; S.playing = true;
+  ctrl.forEach((c,i)=>{ c.visible = true; ctrlGrip[i].visible = true; });
+  $('title').classList.add('hidden');
+  $('menu').classList.add('hidden'); $('menubtn').classList.add('hidden');
+  $('hud').classList.remove('hidden'); $('cross').classList.add('hidden');
+  panel.visible = false;
+  toast('🥽 VR mode — B opens the spawn panel, grip grabs, trigger shoots');
+  setTimeout(()=> $('toast').style.opacity = 0, 4000);
+});
+renderer.xr.addEventListener('sessionend', ()=>{
+  S.xr = false;
+  ctrl.forEach((c,i)=>{ c.visible = false; ctrlGrip[i].visible = false; });
+  panel.visible = false;
+  dropHeld();
+  for (const p of S.props) if (p.grabbedBy && p.grabbedBy.isObject3D) p.grabbedBy = null;
+  $('hud').classList.remove('hidden');
+  $('cross').classList.remove('hidden');
+  $('menubtn').classList.remove('hidden');
+  renderMenu();
+});
+
+/* ============================== main loop ============================== */
+const clock = new THREE.Clock();
+const tmpV = new THREE.Vector3();
+renderer.setAnimationLoop(()=>{
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (S.playing){
+    stepProps(dt); stepShots(dt); stepBursts(dt);
+    camera.getWorldPosition(tmpV);
+    stepEnemies(dt, tmpV);
+    if (S.xr) stepVR(dt); else stepPlayerPC(dt);
+  }
+  renderer.render(scene, camera);
+});
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
