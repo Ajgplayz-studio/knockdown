@@ -446,6 +446,49 @@ function stepProps(dt){
     if (Math.abs(pos.z) > S.bounds){ pos.z = Math.sign(pos.z)*S.bounds; p.vel.z *= -0.6; }
   }
 }
+/* ---------- object collision: props vs props, props vs enemies ---------- */
+function resolveSpherePair(pa, va, ra, pb, vb, rb, bStatic){
+  const dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
+  const rr = ra + rb, d2 = dx*dx + dy*dy + dz*dz;
+  if (d2 >= rr*rr) return;
+  let nx, ny, nz;
+  const d = Math.sqrt(d2);
+  if (d < 1e-6){ nx = 1; ny = 0; nz = 0; }
+  else { nx = dx/d; ny = dy/d; nz = dz/d; }
+  const overlap = rr - d, rest = 0.55;
+  const rel = (vb.x-va.x)*nx + (vb.y-va.y)*ny + (vb.z-va.z)*nz;
+  if (bStatic){
+    pa.x -= nx*overlap; pa.y -= ny*overlap; pa.z -= nz*overlap;
+    if (rel < 0){ const j = -(1+rest)*rel; va.x -= j*nx; va.y -= j*ny; va.z -= j*nz; }
+  } else {
+    const push = overlap/2;
+    pa.x -= nx*push; pa.y -= ny*push; pa.z -= nz*push;
+    pb.x += nx*push; pb.y += ny*push; pb.z += nz*push;
+    if (rel < 0){
+      const j = -(1+rest)*rel/2;
+      va.x -= j*nx; va.y -= j*ny; va.z -= j*nz;
+      vb.x += j*nx; vb.y += j*ny; vb.z += j*nz;
+    }
+  }
+}
+const _zeroV = { x:0, y:0, z:0 };
+function stepCollisions(){
+  const P = S.props;
+  for (let i = 0; i < P.length; i++){
+    const a = P[i];
+    if (a.grabbedBy) continue;
+    for (let j = i+1; j < P.length; j++){
+      const b = P[j];
+      if (b.grabbedBy) continue;
+      resolveSpherePair(a.mesh.position, a.vel, a.radius,
+                        b.mesh.position, b.vel, b.radius, false);
+    }
+    for (const e of S.enemies){
+      resolveSpherePair(a.mesh.position, a.vel, a.radius,
+                        e.mesh.position, _zeroV, 0.55, true);
+    }
+  }
+}
 function stepShots(dt){
   for (let i = S.shots.length-1; i >= 0; i--){
     const s = S.shots[i];
@@ -1037,7 +1080,7 @@ const tmpV = new THREE.Vector3();
 renderer.setAnimationLoop(()=>{
   const dt = Math.min(clock.getDelta(), 0.05);
   if (S.playing){
-    stepProps(dt); stepShots(dt); stepBursts(dt);
+    stepProps(dt); stepCollisions(); stepShots(dt); stepBursts(dt);
     camera.getWorldPosition(tmpV);
     stepEnemies(dt, tmpV);
     if (S.xr) stepVR(dt); else stepPlayerPC(dt);
