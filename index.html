@@ -130,6 +130,9 @@ if (location.hostname.indexOf('github.io') !== -1) {
   <button class="lm" id="lm-maps">🗺️ Change Map</button>
   <div id="lm-maplist" class="hidden">
     <button class="lm map" data-map="sandbox">🗺️ Sandbox</button>
+    <button class="lm map" data-map="infinite">♾️ Infinite</button>
+    <button class="lm map" data-map="moon">🌙 Moon</button>
+    <button class="lm map" data-map="mall">🛍️ Mall</button>
   </div>
   <button class="lm" id="lm-settings">⚙️ Settings</button>
   <div id="lm-settinglist" class="hidden">
@@ -226,6 +229,44 @@ scene.add(sun);
 const ARENA = 44;                 // sandbox half-size
 let mapGroup = null;            // holds the current map's static geometry
 S.map = 'lobby'; S.bounds = 9; S.menuMaps = false; S.menuSettings = false;
+const MAPS = [
+  { id:'lobby', name:'👋 Lobby' },
+  { id:'sandbox', name:'🗺️ Sandbox' },
+  { id:'infinite', name:'♾️ Infinite' },
+  { id:'moon', name:'🌙 Moon' },
+  { id:'mall', name:'🛍️ Mall' },
+];
+let followGround = null, followGrid = null;   // infinite map: ground follows the player
+// starfield (toggled per map)
+const starField = (()=>{
+  const pos = [];
+  for (let i=0;i<900;i++){
+    const r = 300, th = Math.random()*Math.PI*2, ph = Math.acos(Math.random()*0.92);
+    pos.push(r*Math.sin(ph)*Math.cos(th), Math.abs(r*Math.cos(ph))+8, r*Math.sin(ph)*Math.sin(th));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  const p = new THREE.Points(g, new THREE.PointsMaterial({ color:0xffffff, size:1.8, sizeAttenuation:false }));
+  p.visible = false; p.frustumCulled = false; scene.add(p); return p;
+})();
+function setSky(bg, fogNear, fogFar, stars){
+  scene.background.set(bg);
+  scene.fog.color.set(bg); scene.fog.near = fogNear; scene.fog.far = fogFar;
+  starField.visible = stars;
+}
+// canvas text texture helper for signs
+function textTex(lines, W, H, bg, colors, fonts){
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = bg; cx.fillRect(0,0,W,H);
+  cx.textAlign = 'center'; cx.textBaseline = 'middle';
+  lines.forEach((ln,i)=>{
+    cx.fillStyle = Array.isArray(colors) ? colors[i%colors.length] : colors;
+    cx.font = Array.isArray(fonts) ? fonts[i%fonts.length] : fonts;
+    cx.fillText(ln, W/2, H*(i+1)/(lines.length+1));
+  });
+  return new THREE.CanvasTexture(cv);
+}
 function clearMapGroup(){ if (mapGroup){ scene.remove(mapGroup); mapGroup = null; } }
 
 function buildSandbox(){
@@ -308,21 +349,157 @@ function buildLobby(){
   });
 }
 
+
+function buildInfinite(){
+  // endless night plain: ground + grid follow the player, nothing else here
+  followGround = new THREE.Mesh(
+    new THREE.PlaneGeometry(400, 400),
+    new THREE.MeshStandardMaterial({ color:0x0d1428, roughness:1 })
+  );
+  followGround.rotation.x = -Math.PI/2; followGround.receiveShadow = true;
+  mapGroup.add(followGround);
+  followGrid = new THREE.GridHelper(400, 100, 0x35e0ff, 0x1a5a7a);
+  followGrid.material.transparent = true; followGrid.material.opacity = 0.22;
+  followGrid.position.y = 0.02; mapGroup.add(followGrid);
+}
+
+function buildMoon(){
+  // gray ground
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(180, 180),
+    new THREE.MeshStandardMaterial({ color:0x8f9296, roughness:1 }));
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
+  // craters: dark discs
+  const craterMat = new THREE.MeshStandardMaterial({ color:0x5f6266, roughness:1 });
+  [[-14,-6,5],[10,-18,7],[22,4,4],[-24,12,6],[4,20,5],[-8,-26,4],[28,-10,6],[-30,-14,5],[14,28,7],[-4,8,3]]
+  .forEach(([x,z,r])=>{
+    const c = new THREE.Mesh(new THREE.CircleGeometry(r, 24), craterMat);
+    c.rotation.x = -Math.PI/2; c.position.set(x, 0.015, z); c.receiveShadow = true; mapGroup.add(c);
+  });
+  // scattered rocks
+  const rockMat = new THREE.MeshStandardMaterial({ color:0x6e7175, roughness:1 });
+  for (let i=0;i<14;i++){
+    const s = 0.4 + Math.random()*1.6;
+    const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(s, 0), rockMat);
+    const a = Math.random()*Math.PI*2, rr = 8 + Math.random()*30;
+    rock.position.set(Math.cos(a)*rr, s*0.5, Math.sin(a)*rr);
+    rock.rotation.set(Math.random()*3, Math.random()*3, Math.random()*3);
+    rock.castShadow = true; mapGroup.add(rock);
+  }
+  // distant mountain ring
+  const mMat = new THREE.MeshStandardMaterial({ color:0x565a5f, roughness:1 });
+  for (let i=0;i<12;i++){
+    const a = (i/12)*Math.PI*2 + 0.2;
+    const h = 8 + Math.random()*8, r = 6 + Math.random()*5;
+    const m = new THREE.Mesh(new THREE.ConeGeometry(r, h, 5), mMat);
+    m.position.set(Math.cos(a)*62, h/2 - 0.5, Math.sin(a)*62);
+    mapGroup.add(m);
+  }
+  // Earth in the sky
+  const earth = new THREE.Mesh(new THREE.SphereGeometry(7, 24, 24),
+    new THREE.MeshBasicMaterial({ color:0x4a90d9 }));
+  earth.position.set(-70, 85, -140); mapGroup.add(earth);
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(7.8, 24, 24),
+    new THREE.MeshBasicMaterial({ color:0x9fd0ff, transparent:true, opacity:0.25 }));
+  glow.position.copy(earth.position); mapGroup.add(glow);
+  // little flag
+  const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3, 8),
+    new THREE.MeshStandardMaterial({ color:0xcccccc }));
+  pole.position.set(3, 1.5, 8); mapGroup.add(pole);
+  const flag = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.1),
+    new THREE.MeshBasicMaterial({ map:textTex(['🌙 KNOCKDOWN'], 512, 300, '#10141f', '#ff8c42', 'bold 64px sans-serif'), side:THREE.DoubleSide }));
+  flag.position.set(3.95, 2.4, 8); mapGroup.add(flag);
+}
+
+function buildMall(){
+  const W = 46, D = 52;
+  // tile floor
+  const g = new THREE.Mesh(new THREE.PlaneGeometry(W, D),
+    new THREE.MeshStandardMaterial({ color:0xd8d2c4, roughness:.9 }));
+  g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
+  // red carpet runner
+  const carpet = new THREE.Mesh(new THREE.PlaneGeometry(7, D-4),
+    new THREE.MeshStandardMaterial({ color:0x9c2f2f, roughness:1 }));
+  carpet.rotation.x = -Math.PI/2; carpet.position.y = 0.01; carpet.receiveShadow = true; mapGroup.add(carpet);
+  const grid = new THREE.GridHelper(Math.max(W,D), 40, 0xb0a890, 0xb0a890);
+  grid.material.transparent = true; grid.material.opacity = 0.15;
+  grid.position.y = 0.02; mapGroup.add(grid);
+  // storefronts
+  const stores = [
+    ['🍕 PIZZA', 0xd94f30], ['🕹️ ARCADE', 0x7c3aed], ['👟 SHOES', 0x2563eb],
+    ['🧸 TOYS', 0x16a34a], ['📚 BOOKS', 0xb45309], ['🍬 CANDY', 0xec4899],
+  ];
+  stores.forEach(([nm, col], i)=>{
+    const side = i < 3 ? -1 : 1, k = i % 3, z = -15 + k*15;
+    const box = new THREE.Mesh(new THREE.BoxGeometry(9, 6.5, 11),
+      new THREE.MeshStandardMaterial({ color:col, roughness:.8 }));
+    box.position.set(side*17.5, 3.25, z); box.castShadow = true; box.receiveShadow = true; mapGroup.add(box);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(8, 1.7),
+      new THREE.MeshBasicMaterial({ map:textTex([nm], 512, 110, '#141a30', '#ffffff', 'bold 64px sans-serif') }));
+    sign.position.set(side*12.9, 5.2, z);
+    sign.rotation.y = side < 0 ? Math.PI/2 : -Math.PI/2;
+    mapGroup.add(sign);
+    const win = new THREE.Mesh(new THREE.PlaneGeometry(7, 2.6),
+      new THREE.MeshStandardMaterial({ color:0x1a2030, roughness:.3, metalness:.4 }));
+    win.position.set(side*12.92, 1.9, z);
+    win.rotation.y = side < 0 ? Math.PI/2 : -Math.PI/2;
+    mapGroup.add(win);
+  });
+  // pillars
+  const pilMat = new THREE.MeshStandardMaterial({ color:0xe8e2d4, roughness:.8 });
+  [-15,-5,5,15].forEach(z=>{ [-8,8].forEach(x=>{
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, 9, 12), pilMat);
+    p.position.set(x, 4.5, z); p.castShadow = true; mapGroup.add(p);
+  });});
+  // planters + benches
+  const plantMat = new THREE.MeshStandardMaterial({ color:0x2f7d32, roughness:1 });
+  const benchMat = new THREE.MeshStandardMaterial({ color:0x8a5a2b, roughness:.9 });
+  [-10, 0, 10].forEach(z=>{
+    const pl = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.6, 1.6), plantMat);
+    pl.position.set(-5.5, 0.8, z); pl.castShadow = true; mapGroup.add(pl);
+    const pl2 = pl.clone(); pl2.position.x = 5.5; mapGroup.add(pl2);
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 1), benchMat);
+    b.position.set(0, 0.55, z+4); b.castShadow = true; mapGroup.add(b);
+  });
+  // end walls + MALL sign
+  const wallMat = new THREE.MeshStandardMaterial({ color:0xcfc9bd, roughness:.9 });
+  [-1, 1].forEach(s=>{
+    const w = new THREE.Mesh(new THREE.BoxGeometry(W, 10, 1), wallMat);
+    w.position.set(0, 5, s*(D/2)); mapGroup.add(w);
+  });
+  const msign = new THREE.Mesh(new THREE.PlaneGeometry(14, 2.6),
+    new THREE.MeshBasicMaterial({ map:textTex(['🛍️ THE MALL'], 1024, 190, '#141a30', '#ff8c42', 'bold 96px sans-serif') }));
+  msign.position.set(0, 7, -D/2+0.6); mapGroup.add(msign);
+}
+
 function loadMap(name){
   clearAll();
   clearMapGroup();
   mapGroup = new THREE.Group(); scene.add(mapGroup);
   S.map = name;
+  S.gravity = 9.8; S.lowG = false;
+  if (name === 'moon'){ S.gravity = 1.6; setSky(0x040409, 40, 170, true); }
+  else if (name === 'infinite'){ setSky(0x05070f, 30, 150, true); }
+  else setSky(0x8fc3ee, 45, 150, false);
   yaw = 0; pitch = 0; rig.rotation.y = 0; camera.rotation.x = 0;
   if (name === 'sandbox'){
     S.bounds = ARENA; buildSandbox();
     rig.position.set(0, 0, 14);
+  } else if (name === 'infinite'){
+    S.bounds = 100000; buildInfinite();
+    rig.position.set(0, 0, 0);
+  } else if (name === 'moon'){
+    S.bounds = 40; buildMoon();
+    rig.position.set(0, 0, 12);
+  } else if (name === 'mall'){
+    S.bounds = 21; buildMall();
+    rig.position.set(0, 0, 18);
   } else {
     S.bounds = 9; buildLobby();
     rig.position.set(0, 0, 6);
   }
   updateHUD(); renderLobbyMenu(); drawVRMenu();
-  toast(name === 'sandbox' ? '🗺️ Sandbox' : '👋 Welcome to the lobby');
+  const mi = MAPS.find(m=>m.id===name);
+  toast(name === 'lobby' ? '👋 Welcome to the lobby' : (mi ? mi.name : name));
 }
 
 /* ============================== spawn helpers ============================== */
@@ -628,7 +805,7 @@ function updateHUD(){
   $('hscore').textContent = S.score;
   $('henemies').textContent = S.enemies.length;
   $('hprops').textContent = S.props.length;
-  $('hgrav').textContent = S.lowG ? '🌙 low-g' : '🌍 normal-g';
+  $('hgrav').textContent = S.gravity < 9 ? '🌙 low-g' : '🌍 normal-g';
   $('hhp').textContent = S.hp;
   $('hhp').style.color = S.hp <= 30 ? '#ff5b5b' : '';
   $('hammoPill').style.display = S.equipped === 'spawner' ? '' : 'none';
@@ -849,7 +1026,7 @@ function stepPlayerPC(dt){
     rig.position.addScaledVector(f, speed*dt);
   }
   // jump + gravity
-  playerVel.y -= 22*dt;
+  playerVel.y -= 22*(S.gravity/9.8)*dt;
   if (onGround && keys['Space']){ playerVel.y = 7.5*S.scale; onGround = false; }
   rig.position.y += playerVel.y*dt;
   if (rig.position.y <= 0){ rig.position.y = 0; playerVel.y = 0; onGround = true; }
@@ -991,18 +1168,19 @@ function drawVRMenu(){
     { label:'🌐 Join Lobby (coming soon)', kind:'join' },
     { label:'🗺️ Change Map', kind:'maps' },
   ];
-  if (S.menuMaps) rows.push({ label:'▶ 🗺️ Sandbox', kind:'map:sandbox' });
+  if (S.menuMaps) for (const m of MAPS){ if (m.id !== 'lobby') rows.push({ label:'▶ ' + m.name + (S.map===m.id ? ' ✓' : ''), kind:'map:'+m.id }); }
   rows.push({ label:'⚙️ Settings', kind:'settings' });
   if (S.menuSettings) rows.push({ label: S.settings.damage ? '💔 Take damage: ON' : '🤍 Take damage: OFF', kind:'damage' });
   if (S.menuSettings) rows.push({ label: '🐌 Monster speed: ' + S.settings.speed + 'x', kind:'speed' });
   if (S.map !== 'lobby') rows.push({ label:'🚪 Back to Lobby', kind:'back' });
+  const rh = rows.length > 10 ? 48 : rows.length > 8 ? 56 : 64, bh = rh - 10;
   rows.forEach((r, idx)=>{
-    const x = 16, y = 70 + idx*64, w = 480, h = 54;
+    const x = 16, y = 70 + idx*rh, w = 480, h = bh;
     c.fillStyle = r.kind.startsWith('map:') ? 'rgba(255,106,43,.3)' : 'rgba(255,255,255,.1)';
     c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
     if (r.kind.startsWith('map:')){ c.strokeStyle = '#ff6a2b'; c.lineWidth = 2;
       c.beginPath(); c.roundRect(x,y,w,h,12); c.stroke(); }
-    c.fillStyle = '#fff'; c.font = '25px sans-serif';
+    c.fillStyle = '#fff'; c.font = (rh < 56 ? 21 : 25) + 'px sans-serif';
     c.fillText(r.label, 256, y+36);
     menuHits.push({ x, y, w, h, kind:r.kind });
   });
@@ -1032,10 +1210,10 @@ function vrMenuPress(c){
   for (const h of menuHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
       if (h.kind === 'spawner'){ equipSpawner(); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
-      else if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; drawVRMenu(); beep(700,.05,'triangle',.08); }
-      else if (h.kind === 'map:sandbox'){ loadMap('sandbox'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      else if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; if (S.menuMaps) S.menuSettings = false; drawVRMenu(); beep(700,.05,'triangle',.08); }
+      else if (h.kind.startsWith('map:')){ loadMap(h.kind.slice(4)); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
-      else if (h.kind === 'settings'){ S.menuSettings = !S.menuSettings; drawVRMenu(); beep(700,.05,'triangle',.08); }
+      else if (h.kind === 'settings'){ S.menuSettings = !S.menuSettings; if (S.menuSettings) S.menuMaps = false; drawVRMenu(); beep(700,.05,'triangle',.08); }
       else if (h.kind === 'damage'){ S.settings.damage = !S.settings.damage; sfx.power(); drawVRMenu(); }
       else if (h.kind === 'speed'){
         const i = SPEED_STEPS.indexOf(S.settings.speed);
@@ -1156,8 +1334,8 @@ function startPlay(){
   renderMenu();
   updateHUD();
   try{ renderer.domElement.requestPointerLock(); }catch(e){}
-  // starter props so the arena isn't empty
-  ['box','ball','barrel','cone'].forEach((k,i)=>{
+  // starter props so the arena isn't empty (infinite map stays empty)
+  if (S.map !== 'infinite') ['box','ball','barrel','cone'].forEach((k,i)=>{
     setTimeout(()=> addPropQuiet(k, i), 200 + i*150);
   });
   toast('🛠️ Q = spawner gun · ☰ = lobby menu');
@@ -1214,6 +1392,12 @@ renderer.setAnimationLoop(()=>{
     camera.getWorldPosition(tmpV);
     stepEnemies(dt, tmpV);
     if (S.xr) stepVR(dt); else stepPlayerPC(dt);
+    // infinite map: ground follows the player
+    if (S.map === 'infinite' && followGround){
+      const sx = Math.round(rig.position.x/4)*4, sz = Math.round(rig.position.z/4)*4;
+      followGround.position.set(sx, 0, sz);
+      followGrid.position.set(sx, 0.02, sz);
+    }
   }
   renderer.render(scene, camera);
 });
