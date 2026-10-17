@@ -627,11 +627,27 @@ const MENU = {
 };
 const AMMO_KINDS = ['box','ball','barrel','cone','bot','runner','brute'];
 const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', bot:'👾', runner:'🏃', brute:'🦍' };
+function placeSpawnerGun(){
+  // PC: gun floats by the camera. VR: gun sits in the right hand.
+  if (S.xr){
+    ctrlGrip[1].add(spawner);
+    spawner.position.set(0, 0.02, -0.12);
+    spawner.rotation.set(0, 0, 0);
+  } else {
+    camera.add(spawner);
+    spawner.position.set(0.3, -0.26, -0.55);
+    spawner.rotation.set(0, 0.08, 0);
+  }
+}
 function equipSpawner(){
   S.equipped = 'spawner';
-  blaster.visible = false; spawner.visible = true;
-  dropHeld(); updateHUD();
-  toast('🛠️ Spawner gun — pick ammo in the items panel, then click anywhere to spawn it');
+  blaster.visible = false;
+  placeSpawnerGun();
+  spawner.visible = true;
+  dropHeld();
+  for (const p of S.props) if (p.grabbedBy && p.grabbedBy.isObject3D) p.grabbedBy = null;
+  updateHUD();
+  toast('🛠️ Spawner gun — pick ammo, then click / pull trigger anywhere to spawn it');
 }
 function uiSpawn(kind){
   if (kind === 'blaster'){ S.equipped = 'blaster'; blaster.visible = true; spawner.visible = false; dropHeld(); toast('🔫 Blaster equipped — click to shoot'); }
@@ -737,9 +753,7 @@ addEventListener('mousemove', e=>{
 });
 const ray = new THREE.Raycaster();
 const aimRay = new THREE.Raycaster();
-function spawnAim(kind){
-  const o = new THREE.Vector3(); camera.getWorldPosition(o);
-  const d = new THREE.Vector3(); camera.getWorldDirection(d);
+function spawnAimFrom(o, d, kind){
   aimRay.set(o, d); aimRay.far = 60;
   const hits = aimRay.intersectObjects(mapGroup.children, true);
   const radius = kind === 'ball' ? 0.45 : 0.55;
@@ -758,6 +772,11 @@ function spawnAim(kind){
   if (ENEMY_TYPES[kind]) makeEnemy(kind, p); else addProp(kind, p);
   burst(p.clone(), 0x22c55e);
   sfx.spawn();
+}
+function spawnAim(kind){
+  const o = new THREE.Vector3(); camera.getWorldPosition(o);
+  const d = new THREE.Vector3(); camera.getWorldDirection(d);
+  spawnAimFrom(o, d, kind);
 }
 function pickProp(maxDist=7){
   ray.setFromCamera({ x:0, y:0 }, camera);
@@ -878,8 +897,11 @@ function drawPanel(){
   });
   MENU[S.menuCat].forEach(([kind, label], i)=>{
     const x = 14 + (i%2)*242, y = 120 + Math.floor(i/2)*78, w = 228, h = 64;
-    c.fillStyle = 'rgba(255,255,255,.1)';
+    const sel = S.equipped === 'spawner' && AMMO_KINDS.includes(kind) && kind === S.ammo;
+    c.fillStyle = sel ? 'rgba(34,197,94,.45)' : 'rgba(255,255,255,.1)';
     c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
+    if (sel){ c.strokeStyle = '#22c55e'; c.lineWidth = 3;
+      c.beginPath(); c.roundRect(x,y,w,h,12); c.stroke(); }
     c.fillStyle = '#fff'; c.font = '24px sans-serif';
     c.fillText(label, x+w/2, y+41);
     panelHits.push({ x, y, w, h, kind });
@@ -912,6 +934,9 @@ function vrPanelPress(c){
   for (const h of panelHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
       if (h.kind.startsWith('__tab:')){ S.menuCat = h.kind.slice(6); drawPanel(); }
+      else if (S.equipped === 'spawner' && AMMO_KINDS.includes(h.kind)){
+        S.ammo = h.kind; updateHUD(); sfx.spawn(); drawPanel();
+      }
       else { uiSpawn(h.kind); drawPanel(); }
       beep(700, .05, 'triangle', .08);
       return true;
@@ -922,10 +947,10 @@ function vrPanelPress(c){
 /* --- floating 3D lobby menu panel (VR — not HTML UI) --- */
 const menuPanel = new THREE.Group();
 const menuCanvas = document.createElement('canvas');
-menuCanvas.width = 512; menuCanvas.height = 640;
+menuCanvas.width = 512; menuCanvas.height = 704;
 const menuCtx = menuCanvas.getContext('2d');
 const menuTex = new THREE.CanvasTexture(menuCanvas);
-const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.44),
+const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.58),
   new THREE.MeshBasicMaterial({ map:menuTex, transparent:true, side:THREE.DoubleSide }));
 menuPanel.add(menuMesh);
 menuPanel.visible = false;
@@ -933,13 +958,14 @@ scene.add(menuPanel);
 let menuHits = [];   // {x,y,w,h,kind}
 function drawVRMenu(){
   const c = menuCtx;
-  c.clearRect(0,0,512,640);
+  c.clearRect(0,0,512,704);
   c.fillStyle = 'rgba(12,15,28,.95)';
-  c.beginPath(); c.roundRect(0,0,512,640,28); c.fill();
+  c.beginPath(); c.roundRect(0,0,512,704,28); c.fill();
   c.fillStyle = '#ffb27a'; c.font = 'bold 30px sans-serif'; c.textAlign = 'center';
   c.fillText('🎯 MENU', 256, 46);
   menuHits = [];
   const rows = [
+    { label:'🛠️ Spawner Gun', kind:'spawner' },
     { label:'🖥️ Host (coming soon)', kind:'host' },
     { label:'🌐 Join Lobby (coming soon)', kind:'join' },
     { label:'🗺️ Change Map', kind:'maps' },
@@ -960,7 +986,7 @@ function drawVRMenu(){
     menuHits.push({ x, y, w, h, kind:r.kind });
   });
   c.fillStyle = '#8b8e99'; c.font = '19px sans-serif';
-  c.fillText('trigger = select · A = close', 256, 618);
+  c.fillText('trigger = select · A = close', 256, 682);
   menuTex.needsUpdate = true;
 }
 function toggleVRMenu(){
@@ -981,10 +1007,11 @@ function vrMenuPress(c){
   vrRay.set(o, d);
   const hit = vrRay.intersectObject(menuMesh, false)[0];
   if (!hit) return false;
-  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 640;
+  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 704;
   for (const h of menuHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
-      if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; drawVRMenu(); beep(700,.05,'triangle',.08); }
+      if (h.kind === 'spawner'){ equipSpawner(); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      else if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; drawVRMenu(); beep(700,.05,'triangle',.08); }
       else if (h.kind === 'map:sandbox'){ loadMap('sandbox'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'settings'){ S.menuSettings = !S.menuSettings; drawVRMenu(); beep(700,.05,'triangle',.08); }
@@ -1016,10 +1043,11 @@ ctrl.forEach((c, i)=>{
     if (!S.xr) return;
     if (vrPanelPress(c)) return;
     if (vrMenuPress(c)) return;
-    if (i === 1){ // right hand shoots
+    if (i === 1){ // right hand shoots / spawns
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
-      fireShot(o, d);
+      if (S.equipped === 'spawner') spawnAimFrom(o, d, S.ammo);
+      else fireShot(o, d);
     }
   });
   c.addEventListener('squeezestart', ()=>{          // grip: grab
@@ -1127,7 +1155,9 @@ renderer.xr.addEventListener('sessionstart', ()=>{
   $('menu').classList.add('hidden'); $('menubtn').classList.add('hidden');
   $('lobbybtn').classList.add('hidden'); $('lobbymenu').classList.add('hidden');
   menuPanel.visible = false;
-  spawner.visible = false;
+  blaster.visible = false;
+  placeSpawnerGun();
+  spawner.visible = (S.equipped === 'spawner');
   $('hud').classList.remove('hidden'); $('cross').classList.add('hidden');
   panel.visible = false;
   toast('🥽 VR — B spawn panel · A menu · grip grab · trigger shoot');
@@ -1144,6 +1174,9 @@ renderer.xr.addEventListener('sessionend', ()=>{
   $('menubtn').classList.remove('hidden');
   $('lobbybtn').classList.remove('hidden');
   menuPanel.visible = false;
+  blaster.visible = (S.equipped === 'blaster');
+  placeSpawnerGun();
+  spawner.visible = (S.equipped === 'spawner');
   renderMenu();
 });
 
