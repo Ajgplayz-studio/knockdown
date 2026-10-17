@@ -80,6 +80,8 @@ if (location.hostname.indexOf('github.io') !== -1) {
   #lobbymenu #lm-maplist.hidden { display:none; }
   #lobbymenu #lm-maplist { margin-bottom:8px; }
   #lobbymenu .lm.map { background:rgba(255,106,43,.18); border-color:#ff6a2b; }
+  #dmgflash { position:fixed; inset:0; z-index:24; pointer-events:none; opacity:0;
+    background:radial-gradient(ellipse at center, transparent 55%, rgba(255,30,30,.55) 100%); }
   #toast { position:fixed; bottom:22px; left:50%; transform:translateX(-50%); z-index:25;
     background:rgba(10,13,25,.9); color:#ffd9a8; font-size:13.5px; padding:9px 18px;
     border-radius:10px; border:1px solid rgba(255,178,122,.4); opacity:0; transition:opacity .25s;
@@ -129,6 +131,10 @@ if (location.hostname.indexOf('github.io') !== -1) {
   <div id="lm-maplist" class="hidden">
     <button class="lm map" data-map="sandbox">🗺️ Sandbox</button>
   </div>
+  <button class="lm" id="lm-settings">⚙️ Settings</button>
+  <div id="lm-settinglist" class="hidden">
+    <button class="lm map" id="lm-damage">💔 Take damage: ON</button>
+  </div>
   <button class="lm" id="lm-back">🚪 Back to Lobby</button>
 </div>
 
@@ -137,9 +143,11 @@ if (location.hostname.indexOf('github.io') !== -1) {
   <div class="pill">👾 <span id="henemies">0</span></div>
   <div class="pill">📦 <span id="hprops">0</span></div>
   <div class="pill" id="hgrav">🌍 normal-g</div>
+  <div class="pill">❤️ <span id="hhp">100</span></div>
   <div class="pill" id="hammoPill" style="display:none">🛠️ <span id="hammo">🟦</span></div>
 </div>
 <div id="cross" class="hidden"></div>
+<div id="dmgflash"></div>
 <div id="toast"></div>
 
 <script type="module">
@@ -156,6 +164,8 @@ const S = {
   score:0, held:null,
   props:[], shots:[], enemies:[], bursts:[],
   menuCat:'weapons',
+  hp:100,
+  settings:{ damage:true },
 };
 
 /* ============================== audio (tiny synth) ============================== */
@@ -177,6 +187,7 @@ const sfx = {
   grab(){ beep(300, .05, 'sine', .1); },
   spawn(){ beep(660, .05, 'triangle', .08); },
   power(){ beep(220, .15, 'sawtooth', .1); setTimeout(()=>beep(440,.15,'sawtooth',.08), 120); },
+  hurt(){ beep(140, .18, 'sawtooth', .14); setTimeout(()=>beep(90,.22,'sawtooth',.12), 90); },
 };
 
 /* ============================== renderer / scene ============================== */
@@ -212,7 +223,7 @@ scene.add(sun);
 /* ============================== maps: lobby + sandbox ============================== */
 const ARENA = 44;                 // sandbox half-size
 let mapGroup = null;            // holds the current map's static geometry
-S.map = 'lobby'; S.bounds = 9; S.menuMaps = false;
+S.map = 'lobby'; S.bounds = 9; S.menuMaps = false; S.menuSettings = false;
 function clearMapGroup(){ if (mapGroup){ scene.remove(mapGroup); mapGroup = null; } }
 
 function buildSandbox(){
@@ -342,23 +353,31 @@ function addProp(kind, at){
   sfx.spawn(); updateHUD();
   return prop;
 }
-function makeBot(at){
+const ENEMY_TYPES = {
+  bot:    { icon:'👾', r:0.55, color:0xdc2626, speed:[2.6,4.0], dmg:10 },
+  runner: { icon:'🏃', r:0.38, color:0x22d3ee, speed:[4.5,6.5], dmg:5 },
+  brute:  { icon:'🦍', r:0.9,  color:0x7c3aed, speed:[1.2,1.8], dmg:25 },
+};
+function makeEnemy(type, at){
+  const T = ENEMY_TYPES[type] || ENEMY_TYPES.bot;
+  const r = T.r;
   const g = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.55, 20, 16),
-    new THREE.MeshStandardMaterial({ color:0xdc2626, roughness:.5 }));
+  const body = new THREE.Mesh(new THREE.SphereGeometry(r, 20, 16),
+    new THREE.MeshStandardMaterial({ color:T.color, roughness:.5 }));
   body.castShadow = true; g.add(body);
   const eyeMat = new THREE.MeshBasicMaterial({ color:0xffffff });
   const pupMat = new THREE.MeshBasicMaterial({ color:0x111111 });
-  [-0.2, 0.2].forEach(x=>{
-    const e = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10), eyeMat);
-    e.position.set(x, 0.15, 0.44); g.add(e);
-    const p = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), pupMat);
-    p.position.set(x, 0.15, 0.56); g.add(p);
+  [-1, 1].forEach(sgn=>{
+    const e = new THREE.Mesh(new THREE.SphereGeometry(r*0.25, 12, 10), eyeMat);
+    e.position.set(sgn*r*0.35, r*0.25, r*0.78); g.add(e);
+    const p = new THREE.Mesh(new THREE.SphereGeometry(r*0.11, 8, 8), pupMat);
+    p.position.set(sgn*r*0.35, r*0.25, r*0.95); g.add(p);
   });
   const p = at || spawnPoint(5);
-  g.position.set(p.x, 0.55, p.z);
+  g.position.set(p.x, r, p.z);
   scene.add(g);
-  const bot = { mesh:g, t:Math.random()*10, speed:2.6 + Math.random()*1.4 };
+  const bot = { mesh:g, t:Math.random()*10, r, type, icon:T.icon,
+    speed:T.speed[0] + Math.random()*(T.speed[1]-T.speed[0]), dmg:T.dmg };
   S.enemies.push(bot);
   sfx.spawn(); updateHUD();
   return bot;
@@ -369,7 +388,7 @@ function killBot(bot){
   burst(bot.mesh.position.clone(), 0xdc2626);
   scene.remove(bot.mesh);
   S.score += 1; sfx.pop(); updateHUD();
-  toast('👾 Bot popped!  +' + 1);
+  toast((bot.icon || '👾') + ' popped!  +' + 1);
 }
 function burst(pos, color){
   const geo = new THREE.BoxGeometry(0.16, 0.16, 0.16);
@@ -472,6 +491,23 @@ function resolveSpherePair(pa, va, ra, pb, vb, rb, bStatic){
   }
 }
 const _zeroV = { x:0, y:0, z:0 };
+let dmgCooldown = 0;
+function damagePlayer(amount){
+  if (!S.settings.damage || S.hp <= 0) return false;
+  S.hp = Math.max(0, S.hp - amount);
+  dmgCooldown = 0.9;
+  sfx.hurt(); updateHUD();
+  const f = $('dmgflash');
+  f.style.transition = 'none'; f.style.opacity = 0.55;
+  requestAnimationFrame(()=>{ f.style.transition = 'opacity .5s'; f.style.opacity = 0; });
+  if (S.hp <= 0){
+    S.hp = 100; dmgCooldown = 1.5;
+    loadMap('lobby');
+    toast('💀 Knocked out! Back to the lobby with fresh HP');
+    return true;
+  }
+  return false;
+}
 function stepCollisions(){
   const P = S.props;
   for (let i = 0; i < P.length; i++){
@@ -485,7 +521,7 @@ function stepCollisions(){
     }
     for (const e of S.enemies){
       resolveSpherePair(a.mesh.position, a.vel, a.radius,
-                        e.mesh.position, _zeroV, 0.55, true);
+                        e.mesh.position, _zeroV, e.r, true);
     }
   }
 }
@@ -525,14 +561,19 @@ function stepEnemies(dt, playerPos){
     const to = new THREE.Vector3().subVectors(playerPos, e.mesh.position); to.y = 0;
     const dist = to.length();
     if (dist > 0.01){ to.normalize(); e.mesh.position.addScaledVector(to, Math.min(e.speed*dt, dist)); }
-    e.mesh.position.y = 0.55 + Math.abs(Math.sin(e.t*7))*0.28;   // hop
+    e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*7))*0.28;   // hop
     e.mesh.rotation.y = Math.atan2(to.x, to.z);
-    // bump the player when close
-    if (dist < 1.8 && !S.xr){
-      const away = new THREE.Vector3().subVectors(playerPos, e.mesh.position).setY(0).normalize();
-      rig.position.addScaledVector(away, 3.2*dt);
-      e.lastBump = (e.lastBump || 0) + dt;
-      if (e.lastBump > 0.6){ e.lastBump = 0; beep(160, .07, 'sawtooth', .07); }
+    // bump + damage the player when close
+    if (dist < 1.8 + e.r){
+      if (!S.xr){
+        const away = new THREE.Vector3().subVectors(playerPos, e.mesh.position).setY(0).normalize();
+        rig.position.addScaledVector(away, 3.2*dt);
+        e.lastBump = (e.lastBump || 0) + dt;
+        if (e.lastBump > 0.6){ e.lastBump = 0; beep(160, .07, 'sawtooth', .07); }
+      }
+      if (S.settings.damage && dmgCooldown <= 0){
+        if (damagePlayer(e.dmg)) break;   // died -> map reloaded, stop iterating
+      }
     }
     if (Math.abs(e.mesh.position.x) > S.bounds) e.mesh.position.x = Math.sign(e.mesh.position.x)*S.bounds;
     if (Math.abs(e.mesh.position.z) > S.bounds) e.mesh.position.z = Math.sign(e.mesh.position.z)*S.bounds;
@@ -556,6 +597,8 @@ function updateHUD(){
   $('henemies').textContent = S.enemies.length;
   $('hprops').textContent = S.props.length;
   $('hgrav').textContent = S.lowG ? '🌙 low-g' : '🌍 normal-g';
+  $('hhp').textContent = S.hp;
+  $('hhp').style.color = S.hp <= 30 ? '#ff5b5b' : '';
   $('hammoPill').style.display = S.equipped === 'spawner' ? '' : 'none';
   $('hammo').textContent = AMMO_ICON[S.ammo] || '🟦';
 }
@@ -567,11 +610,11 @@ function toast(msg){
 const MENU = {
   weapons:[ ['blaster','🔫 Blaster'], ['hands','✋ Hands'] ],
   props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'] ],
-  enemies:[ ['bot','👾 Bot'] ],
+  enemies:[ ['bot','👾 Bot'], ['runner','🏃 Runner'], ['brute','🦍 Brute'] ],
   powers:[ ['lowg','🌙 Low-G'], ['grow','🔍 Grow'], ['shrink','🔎 Shrink'], ['clear','🧹 Clear'] ],
 };
-const AMMO_KINDS = ['box','ball','barrel','cone','bot'];
-const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', bot:'👾' };
+const AMMO_KINDS = ['box','ball','barrel','cone','bot','runner','brute'];
+const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', bot:'👾', runner:'🏃', brute:'🦍' };
 function equipSpawner(){
   S.equipped = 'spawner';
   blaster.visible = false; spawner.visible = true;
@@ -591,7 +634,7 @@ function uiSpawn(kind){
   else if (kind === 'grow'){ S.scale = Math.min(2.2, S.scale*1.4); sfx.power(); toast('🔍 You grew!'); }
   else if (kind === 'shrink'){ S.scale = Math.max(0.45, S.scale/1.4); sfx.power(); toast('🔎 You shrank!'); }
   else if (kind === 'clear'){ clearAll(); toast('🧹 Arena cleared'); }
-  else if (kind === 'bot'){ makeBot(); }
+  else if (ENEMY_TYPES[kind]){ makeEnemy(kind); }
   else { addProp(kind); }
 }
 function clearAll(){
@@ -623,6 +666,8 @@ function dropHeld(){
 function renderLobbyMenu(){
   $('lm-back').style.display = S.map === 'lobby' ? 'none' : '';
   $('lm-maplist').classList.toggle('hidden', !S.menuMaps);
+  $('lm-settinglist').classList.toggle('hidden', !S.menuSettings);
+  $('lm-damage').textContent = S.settings.damage ? '💔 Take damage: ON' : '🤍 Take damage: OFF';
 }
 function toggleLobbyMenu(force){
   const m = $('lobbymenu');
@@ -636,6 +681,8 @@ document.querySelectorAll('#lm-maplist .map').forEach(b=>{
   b.onclick = ()=>{ loadMap(b.dataset.map); toggleLobbyMenu(false); };
 });
 $('lm-back').onclick = ()=>{ loadMap('lobby'); toggleLobbyMenu(false); };
+$('lm-settings').onclick = ()=>{ S.menuSettings = !S.menuSettings; renderLobbyMenu(); };
+$('lm-damage').onclick = ()=>{ S.settings.damage = !S.settings.damage; sfx.power(); renderLobbyMenu(); updateHUD(); };
 // Host / Join Lobby intentionally do nothing (coming soon)
 
 /* ============================== PC input ============================== */
@@ -690,7 +737,7 @@ function spawnAim(kind){
   p.x = Math.max(-S.bounds, Math.min(S.bounds, p.x));
   p.z = Math.max(-S.bounds, Math.min(S.bounds, p.z));
   p.y = Math.max(radius, p.y);
-  if (kind === 'bot') makeBot(p); else addProp(kind, p);
+  if (ENEMY_TYPES[kind]) makeEnemy(kind, p); else addProp(kind, p);
   burst(p.clone(), 0x22c55e);
   sfx.spawn();
 }
@@ -857,10 +904,10 @@ function vrPanelPress(c){
 /* --- floating 3D lobby menu panel (VR — not HTML UI) --- */
 const menuPanel = new THREE.Group();
 const menuCanvas = document.createElement('canvas');
-menuCanvas.width = 512; menuCanvas.height = 500;
+menuCanvas.width = 512; menuCanvas.height = 640;
 const menuCtx = menuCanvas.getContext('2d');
 const menuTex = new THREE.CanvasTexture(menuCanvas);
-const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.12),
+const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.44),
   new THREE.MeshBasicMaterial({ map:menuTex, transparent:true, side:THREE.DoubleSide }));
 menuPanel.add(menuMesh);
 menuPanel.visible = false;
@@ -868,9 +915,9 @@ scene.add(menuPanel);
 let menuHits = [];   // {x,y,w,h,kind}
 function drawVRMenu(){
   const c = menuCtx;
-  c.clearRect(0,0,512,500);
+  c.clearRect(0,0,512,640);
   c.fillStyle = 'rgba(12,15,28,.95)';
-  c.beginPath(); c.roundRect(0,0,512,500,28); c.fill();
+  c.beginPath(); c.roundRect(0,0,512,640,28); c.fill();
   c.fillStyle = '#ffb27a'; c.font = 'bold 30px sans-serif'; c.textAlign = 'center';
   c.fillText('🎯 MENU', 256, 46);
   menuHits = [];
@@ -880,9 +927,11 @@ function drawVRMenu(){
     { label:'🗺️ Change Map', kind:'maps' },
   ];
   if (S.menuMaps) rows.push({ label:'▶ 🗺️ Sandbox', kind:'map:sandbox' });
+  rows.push({ label:'⚙️ Settings', kind:'settings' });
+  if (S.menuSettings) rows.push({ label: S.settings.damage ? '💔 Take damage: ON' : '🤍 Take damage: OFF', kind:'damage' });
   if (S.map !== 'lobby') rows.push({ label:'🚪 Back to Lobby', kind:'back' });
   rows.forEach((r, idx)=>{
-    const x = 16, y = 70 + idx*74, w = 480, h = 62;
+    const x = 16, y = 70 + idx*70, w = 480, h = 58;
     c.fillStyle = r.kind.startsWith('map:') ? 'rgba(255,106,43,.3)' : 'rgba(255,255,255,.1)';
     c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
     if (r.kind.startsWith('map:')){ c.strokeStyle = '#ff6a2b'; c.lineWidth = 2;
@@ -892,7 +941,7 @@ function drawVRMenu(){
     menuHits.push({ x, y, w, h, kind:r.kind });
   });
   c.fillStyle = '#8b8e99'; c.font = '19px sans-serif';
-  c.fillText('trigger = select · A = close', 256, 478);
+  c.fillText('trigger = select · A = close', 256, 618);
   menuTex.needsUpdate = true;
 }
 function toggleVRMenu(){
@@ -913,12 +962,14 @@ function vrMenuPress(c){
   vrRay.set(o, d);
   const hit = vrRay.intersectObject(menuMesh, false)[0];
   if (!hit) return false;
-  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 500;
+  const px = hit.uv.x * 512, py = (1 - hit.uv.y) * 640;
   for (const h of menuHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
       if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; drawVRMenu(); beep(700,.05,'triangle',.08); }
       else if (h.kind === 'map:sandbox'){ loadMap('sandbox'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      else if (h.kind === 'settings'){ S.menuSettings = !S.menuSettings; drawVRMenu(); beep(700,.05,'triangle',.08); }
+      else if (h.kind === 'damage'){ S.settings.damage = !S.settings.damage; sfx.power(); drawVRMenu(); }
       // host / join: coming soon — intentionally do nothing
       return true;
     }
@@ -1081,6 +1132,7 @@ renderer.setAnimationLoop(()=>{
   const dt = Math.min(clock.getDelta(), 0.05);
   if (S.playing){
     stepProps(dt); stepCollisions(); stepShots(dt); stepBursts(dt);
+    if (dmgCooldown > 0) dmgCooldown -= dt;
     camera.getWorldPosition(tmpV);
     stepEnemies(dt, tmpV);
     if (S.xr) stepVR(dt); else stepPlayerPC(dt);
