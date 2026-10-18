@@ -603,6 +603,7 @@ const propMats = {
 const PROP_RADIUS = {
   box:0.55, ball:0.45, barrel:0.55, cone:0.55,
   tire:0.62, plank:0.6, beachball:0.7, crate:0.92, bowling:0.4, rock:0.55,
+  potion:0.35,
 };
 function spawnPoint(dist=3.2){
   const p = new THREE.Vector3();
@@ -623,6 +624,19 @@ function addProp(kind, at){
   else if (kind === 'plank') mesh = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.5), pm.plank);
   else if (kind === 'crate') mesh = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), pm.crate);
   else if (kind === 'rock') mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55, 0), pm.rock);
+  else if (kind === 'potion'){
+    mesh = new THREE.Group();
+    const glass = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.26, 0.55, 14),
+      new THREE.MeshStandardMaterial({ color:0xd1fae5, roughness:.15, transparent:true, opacity:.5 }));
+    const liquid = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.2, 0.34, 12),
+      new THREE.MeshStandardMaterial({ color:0x22c55e, roughness:.3, emissive:0x16a34a, emissiveIntensity:.6 }));
+    liquid.position.y = -0.06;
+    const cork = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.14, 10),
+      new THREE.MeshStandardMaterial({ color:0x8b5e34, roughness:.9 }));
+    cork.position.y = 0.34;
+    glass.castShadow = true;
+    mesh.add(glass, liquid, cork);
+  }
   else mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), pm.box);
   const radius = PROP_RADIUS[kind] || 0.55;
   mesh.castShadow = true; mesh.receiveShadow = true;
@@ -879,6 +893,15 @@ function stepProps(dt){
     if (Math.abs(pos.x) > S.bounds){ pos.x = Math.sign(pos.x)*S.bounds; p.vel.x *= -0.6; }
     if (Math.abs(pos.z) > S.bounds){ pos.z = Math.sign(pos.z)*S.bounds; p.vel.z *= -0.6; }
   }
+  // potions: walk into one (or grab it) to drink it
+  if (S.hp < 100){
+    camera.getWorldPosition(tmpV);
+    for (let i = S.props.length-1; i >= 0; i--){
+      const p = S.props[i];
+      if (p.kind !== 'potion' || p.grabbedBy) continue;
+      if (p.mesh.position.distanceToSquared(tmpV) < 1.44) drinkPotion(p);
+    }
+  }
 }
 /* ---------- object collision: props vs props, props vs enemies ---------- */
 function resolveSpherePair(pa, va, ra, pb, vb, rb, bStatic){
@@ -922,6 +945,25 @@ function damagePlayer(amount){
     return true;
   }
   return false;
+}
+function healPlayer(amount){
+  if (S.hp >= 100 || S.hp <= 0) return false;
+  S.hp = Math.min(100, S.hp + amount);
+  updateHUD();
+  return true;
+}
+function drinkPotion(p){
+  if (!healPlayer(30)) return false;   // full HP (or dead): leave the potion alone
+  const i = S.props.indexOf(p);
+  if (i >= 0) S.props.splice(i, 1);
+  if (S.held === p){ S.held = null; }
+  p.grabbedBy = null;
+  burst(p.mesh.position.clone(), 0x22c55e);
+  scene.remove(p.mesh);
+  sfx.power();
+  toast('🧪 +30 HP');
+  updateHUD();
+  return true;
 }
 function stepCollisions(){
   const P = S.props;
@@ -1038,15 +1080,15 @@ const MENU = {
   weapons:[ ['blaster','🔫 Blaster'], ['scatter','💥 Scattergun'], ['rocket','🚀 Rocket'], ['hands','✋ Hands'] ],
   props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'],
     ['tire','🛞 Tire'], ['plank','🪵 Plank'], ['beachball','🏐 Beach Ball'],
-    ['crate','📦 Crate'], ['bowling','🎳 Bowling'], ['rock','🪨 Rock'] ],
+    ['crate','📦 Crate'], ['bowling','🎳 Bowling'], ['rock','🪨 Rock'], ['potion','🧪 Potion'] ],
   enemies:[ ['bot','👾 Bot'], ['runner','🏃 Runner'], ['brute','🦍 Brute'],
     ['spider','🕷️ Spider'], ['ghost','👻 Ghost'], ['bat','🦇 Bat'], ['tank','🐢 Tank'],
     ['custom','🎨 Customize'] ],
   powers:[ ['lowg','🌙 Low-G'], ['grow','🔍 Grow'], ['shrink','🔎 Shrink'], ['clear','🧹 Clear'] ],
 };
-const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','crate','bowling','rock','bot','runner','brute','spider','ghost','bat','tank','custom'];
+const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','crate','bowling','rock','potion','bot','runner','brute','spider','ghost','bat','tank','custom'];
 const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', tire:'🛞', plank:'🪵',
-  beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', bot:'👾', runner:'🏃', brute:'🦍',
+  beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', potion:'🧪', bot:'👾', runner:'🏃', brute:'🦍',
   spider:'🕷️', ghost:'👻', bat:'🦇', tank:'🐢', custom:'🎨' };
 /* --- custom mob (not saved; one at a time, loaded as spawner-gun ammo) --- */
 S.customEnemy = null;   // {type, speed, hp, dmg} once configured
@@ -1320,7 +1362,10 @@ renderer.domElement.addEventListener('mousedown', e=>{
       S.held = null; sfx.grab();
     } else {
       const p = pickProp();
-      if (p){ p.grabbedBy = 'pc'; S.held = p; p.vel.set(0,0,0); sfx.grab(); }
+      if (p){
+        if (p.kind === 'potion'){ drinkPotion(p); }
+        else { p.grabbedBy = 'pc'; S.held = p; p.vel.set(0,0,0); sfx.grab(); }
+      }
     }
   }
 });
@@ -1645,7 +1690,10 @@ ctrl.forEach((c, i)=>{
       const d = p.mesh.position.distanceTo(cp);
       if (d < bd){ bd = d; best = p; }
     }
-    if (best){ best.grabbedBy = c; best.vel.set(0,0,0); sfx.grab(); }
+    if (best){
+      if (best.kind === 'potion') drinkPotion(best);
+      else { best.grabbedBy = c; best.vel.set(0,0,0); sfx.grab(); }
+    }
   });
   c.addEventListener('squeezeend', ()=>{            // release grip: throw
     if (!S.xr) return;
