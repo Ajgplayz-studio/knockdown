@@ -163,10 +163,10 @@ const S = {
   playing:false, xr:false,
   gravity:9.8, lowG:false,
   scale:1,                       // player size multiplier (grow/shrink)
-  equipped:'hands',              // 'hands' | 'blaster' | 'spawner'
+  equipped:'hands',              // 'hands' | 'blaster' | 'scatter' | 'rocket' | 'spawner'
   ammo:'box',
   score:0, held:null,
-  props:[], shots:[], enemies:[], bursts:[],
+  props:[], shots:[], rockets:[], enemies:[], bursts:[],
   menuCat:'weapons',
   hp:100,
   settings:{ damage:true, speed:1 },
@@ -193,6 +193,7 @@ const sfx = {
   power(){ beep(220, .15, 'sawtooth', .1); setTimeout(()=>beep(440,.15,'sawtooth',.08), 120); },
   hurt(){ beep(140, .18, 'sawtooth', .14); setTimeout(()=>beep(90,.22,'sawtooth',.12), 90); },
   hit(){ beep(320, .05, 'square', .09); },
+  boom(){ beep(90, .3, 'sawtooth', .2); setTimeout(()=>beep(55,.45,'sawtooth',.18), 80); },
 };
 
 /* ============================== renderer / scene ============================== */
@@ -557,6 +558,16 @@ const propMats = {
   ball:   new THREE.MeshStandardMaterial({ color:0xef4444, roughness:.4 }),
   barrel: new THREE.MeshStandardMaterial({ color:0x22c55e, roughness:.5, metalness:.3 }),
   cone:   new THREE.MeshStandardMaterial({ color:0xf59e0b, roughness:.6 }),
+  tire:   new THREE.MeshStandardMaterial({ color:0x2b2f36, roughness:.9 }),
+  plank:  new THREE.MeshStandardMaterial({ color:0x8b5e34, roughness:.9 }),
+  beachball: new THREE.MeshStandardMaterial({ color:0xf472b6, roughness:.5 }),
+  crate:  new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 }),
+  bowling: new THREE.MeshStandardMaterial({ color:0x1f2937, roughness:.3, metalness:.4 }),
+  rock:   new THREE.MeshStandardMaterial({ color:0x6e7175, roughness:1 }),
+};
+const PROP_RADIUS = {
+  box:0.55, ball:0.45, barrel:0.55, cone:0.55,
+  tire:0.62, plank:0.6, beachball:0.7, crate:0.92, bowling:0.4, rock:0.55,
 };
 function spawnPoint(dist=3.2){
   const p = new THREE.Vector3();
@@ -566,11 +577,19 @@ function spawnPoint(dist=3.2){
   return p;
 }
 function addProp(kind, at){
-  let mesh, radius;
-  if (kind === 'ball'){ mesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 20, 16), propMats.ball); radius = 0.45; }
-  else if (kind === 'barrel'){ mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 18), propMats.barrel); radius = 0.55; }
-  else if (kind === 'cone'){ mesh = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.1, 18), propMats.cone); radius = 0.55; }
-  else { mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), propMats.box); radius = 0.55; }
+  let mesh;
+  const pm = propMats;
+  if (kind === 'ball') mesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 20, 16), pm.ball);
+  else if (kind === 'beachball') mesh = new THREE.Mesh(new THREE.SphereGeometry(0.7, 24, 18), pm.beachball);
+  else if (kind === 'bowling') mesh = new THREE.Mesh(new THREE.SphereGeometry(0.4, 20, 16), pm.bowling);
+  else if (kind === 'barrel') mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 1.1, 18), pm.barrel);
+  else if (kind === 'cone') mesh = new THREE.Mesh(new THREE.ConeGeometry(0.45, 1.1, 18), pm.cone);
+  else if (kind === 'tire') mesh = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.17, 14, 24), pm.tire);
+  else if (kind === 'plank') mesh = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 0.5), pm.plank);
+  else if (kind === 'crate') mesh = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.3, 1.3), pm.crate);
+  else if (kind === 'rock') mesh = new THREE.Mesh(new THREE.DodecahedronGeometry(0.55, 0), pm.rock);
+  else mesh = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.8, 0.8), pm.box);
+  const radius = PROP_RADIUS[kind] || 0.55;
   mesh.castShadow = true; mesh.receiveShadow = true;
   if (at) mesh.position.copy(at);
   else { const p = spawnPoint(); mesh.position.copy(p); }
@@ -658,15 +677,68 @@ function burst(pos, color){
       vel:new THREE.Vector3((Math.random()-.5)*9, Math.random()*8+2, (Math.random()-.5)*9) });
   }
 }
-function fireShot(origin, dir, speed=34){
+function fireShot(origin, dir, speed=34, color=0x7df9ff, life=2.5){
   const m = new THREE.Mesh(new THREE.SphereGeometry(0.14, 12, 10),
-    new THREE.MeshBasicMaterial({ color:0x7df9ff }));
-  const glow = new THREE.PointLight(0x7df9ff, 6, 6);
+    new THREE.MeshBasicMaterial({ color }));
+  const glow = new THREE.PointLight(color, 6, 6);
   m.add(glow);
   m.position.copy(origin).addScaledVector(dir, 0.8);
   scene.add(m);
-  S.shots.push({ mesh:m, vel:dir.clone().multiplyScalar(speed), life:2.5 });
+  S.shots.push({ mesh:m, vel:dir.clone().multiplyScalar(speed), life });
   sfx.shoot();
+}
+function fireScatter(origin, dir){
+  for (let i=0;i<6;i++){
+    const d = dir.clone();
+    d.x += (Math.random()-.5)*0.18; d.y += (Math.random()-.5)*0.18; d.z += (Math.random()-.5)*0.18;
+    d.normalize();
+    fireShot(origin, d, 30, 0xffb347, 1.1);
+  }
+}
+function fireRocket(origin, dir){
+  const m = new THREE.Mesh(new THREE.SphereGeometry(0.22, 14, 12),
+    new THREE.MeshBasicMaterial({ color:0xff7a1a }));
+  const glow = new THREE.PointLight(0xff7a1a, 8, 9);
+  m.add(glow);
+  m.position.copy(origin).addScaledVector(dir, 0.9);
+  scene.add(m);
+  S.rockets.push({ mesh:m, vel:dir.clone().multiplyScalar(16), life:4 });
+  sfx.shoot();
+}
+function explode(pos){
+  burst(pos.clone(), 0xff7a1a); burst(pos.clone(), 0xffd23f);
+  sfx.boom();
+  const R = 4;
+  for (let j = S.enemies.length-1; j >= 0; j--){
+    const e = S.enemies[j];
+    if (e.mesh.position.distanceToSquared(pos) < R*R){ hurtEnemy(e); hurtEnemy(e); }
+  }
+  for (const p of S.props){
+    if (p.grabbedBy) continue;
+    const d = p.mesh.position.distanceTo(pos);
+    if (d < R*1.6){
+      const dir = p.mesh.position.clone().sub(pos).normalize();
+      p.vel.addScaledVector(dir, 14*(1 - d/(R*1.6)));
+      p.vel.y += 6;
+    }
+  }
+}
+function stepRockets(dt){
+  for (let i = S.rockets.length-1; i >= 0; i--){
+    const r = S.rockets[i];
+    r.life -= dt;
+    r.mesh.position.addScaledVector(r.vel, dt);
+    let boom = r.life <= 0 || r.mesh.position.y < 0.15;
+    if (!boom) for (const e of S.enemies){
+      if (r.mesh.position.distanceToSquared(e.mesh.position) < 1.4){ boom = true; break; }
+    }
+    if (!boom) for (const p of S.props){
+      if (p.grabbedBy) continue;
+      const rr = p.radius + 0.25;
+      if (r.mesh.position.distanceToSquared(p.mesh.position) < rr*rr){ boom = true; break; }
+    }
+    if (boom){ explode(r.mesh.position); scene.remove(r.mesh); S.rockets.splice(i, 1); }
+  }
 }
 
 /* ============================== blaster (held gun, PC) ============================== */
@@ -703,6 +775,49 @@ const spawner = new THREE.Group();
   spawner.rotation.y = 0.08;
   spawner.visible = false;
   camera.add(spawner);
+}
+
+/* ============================== scattergun (held gun, PC) ============================== */
+const scattergun = new THREE.Group();
+{
+  const bodyM = new THREE.MeshStandardMaterial({ color:0x3a2e1e, roughness:.5, metalness:.4 });
+  const accM = new THREE.MeshStandardMaterial({ color:0xffb347, roughness:.4, emissive:0xffb347, emissiveIntensity:.7 });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.16, 0.4), bodyM); scattergun.add(body);
+  [-0.035, 0.035].forEach(x=>{
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.032, 0.032, 0.34, 12), bodyM);
+    barrel.rotation.x = Math.PI/2; barrel.position.set(x, 0.04, -0.32); scattergun.add(barrel);
+  });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.075, 0.02, 10, 20), accM);
+  ring.position.set(0, 0.04, -0.5); scattergun.add(ring);
+  const pump = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.1, 0.16), accM);
+  pump.position.set(0, -0.06, -0.25); scattergun.add(pump);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), bodyM);
+  grip.position.set(0, -0.15, 0.08); grip.rotation.x = 0.3; scattergun.add(grip);
+  scattergun.position.set(0.3, -0.26, -0.55);
+  scattergun.rotation.y = 0.08;
+  scattergun.visible = false;
+  camera.add(scattergun);
+}
+
+/* ============================== rocket launcher (held gun, PC) ============================== */
+const rocketgun = new THREE.Group();
+{
+  const bodyM = new THREE.MeshStandardMaterial({ color:0x4a1f1f, roughness:.5, metalness:.4 });
+  const accM = new THREE.MeshStandardMaterial({ color:0xff3d3d, roughness:.4, emissive:0xff3d3d, emissiveIntensity:.7 });
+  const tube = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 0.62, 16), bodyM);
+  tube.rotation.x = Math.PI/2; tube.position.set(0, 0.02, -0.25); rocketgun.add(tube);
+  const ringF = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.022, 10, 20), accM);
+  ringF.position.set(0, 0.02, -0.56); rocketgun.add(ringF);
+  const ringB = new THREE.Mesh(new THREE.TorusGeometry(0.11, 0.022, 10, 20), bodyM);
+  ringB.position.set(0, 0.02, 0.06); rocketgun.add(ringB);
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.08, 0.12), accM);
+  sight.position.set(0, 0.14, -0.2); rocketgun.add(sight);
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.2, 0.1), bodyM);
+  grip.position.set(0, -0.14, 0.05); grip.rotation.x = 0.3; rocketgun.add(grip);
+  rocketgun.position.set(0.3, -0.26, -0.55);
+  rocketgun.rotation.y = 0.08;
+  rocketgun.visible = false;
+  camera.add(rocketgun);
 }
 
 /* ============================== physics step ============================== */
@@ -866,13 +981,16 @@ function toast(msg){
   clearTimeout(toastT); toastT = setTimeout(()=> t.style.opacity = 0, 1800);
 }
 const MENU = {
-  weapons:[ ['blaster','🔫 Blaster'], ['hands','✋ Hands'] ],
-  props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'] ],
+  weapons:[ ['blaster','🔫 Blaster'], ['scatter','💥 Scattergun'], ['rocket','🚀 Rocket'], ['hands','✋ Hands'] ],
+  props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'],
+    ['tire','🛞 Tire'], ['plank','🪵 Plank'], ['beachball','🏐 Beach Ball'],
+    ['crate','📦 Crate'], ['bowling','🎳 Bowling'], ['rock','🪨 Rock'] ],
   enemies:[ ['bot','👾 Bot'], ['runner','🏃 Runner'], ['brute','🦍 Brute'] ],
   powers:[ ['lowg','🌙 Low-G'], ['grow','🔍 Grow'], ['shrink','🔎 Shrink'], ['clear','🧹 Clear'] ],
 };
-const AMMO_KINDS = ['box','ball','barrel','cone','bot','runner','brute'];
-const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', bot:'👾', runner:'🏃', brute:'🦍' };
+const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','crate','bowling','rock','bot','runner','brute'];
+const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', tire:'🛞', plank:'🪵',
+  beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', bot:'👾', runner:'🏃', brute:'🦍' };
 function placeSpawnerGun(){
   // PC: gun floats by the camera. VR: gun rides the right hand's laser pointer,
   // so the model, the laser, and the spawn ray all agree.
@@ -888,7 +1006,7 @@ function placeSpawnerGun(){
 }
 function equipSpawner(){
   S.equipped = 'spawner';
-  blaster.visible = false;
+  blaster.visible = false; scattergun.visible = false; rocketgun.visible = false;
   placeSpawnerGun();
   spawner.visible = true;
   dropHeld();
@@ -897,8 +1015,10 @@ function equipSpawner(){
   toast('🛠️ Spawner gun — pick ammo, then click / pull trigger anywhere to spawn it');
 }
 function uiSpawn(kind){
-  if (kind === 'blaster'){ S.equipped = 'blaster'; blaster.visible = true; spawner.visible = false; dropHeld(); toast('🔫 Blaster equipped — click to shoot'); }
-  else if (kind === 'hands'){ S.equipped = 'hands'; blaster.visible = false; spawner.visible = false; toast('✋ Hands — click a prop to grab it'); }
+  if (kind === 'blaster'){ S.equipped = 'blaster'; blaster.visible = true; scattergun.visible = false; rocketgun.visible = false; spawner.visible = false; dropHeld(); toast('🔫 Blaster equipped — click to shoot'); }
+  else if (kind === 'scatter'){ S.equipped = 'scatter'; blaster.visible = false; scattergun.visible = true; rocketgun.visible = false; spawner.visible = false; dropHeld(); toast('💥 Scattergun equipped — click to blast'); }
+  else if (kind === 'rocket'){ S.equipped = 'rocket'; blaster.visible = false; scattergun.visible = false; rocketgun.visible = true; spawner.visible = false; dropHeld(); toast('🚀 Rocket launcher equipped — click to fire'); }
+  else if (kind === 'hands'){ S.equipped = 'hands'; blaster.visible = false; scattergun.visible = false; rocketgun.visible = false; spawner.visible = false; toast('✋ Hands — click a prop to grab it'); }
   else if (kind === 'spawner'){ equipSpawner(); }
   else if (S.equipped === 'spawner' && AMMO_KINDS.includes(kind)){
     S.ammo = kind; renderMenu(); updateHUD(); sfx.spawn();
@@ -916,7 +1036,8 @@ function clearAll(){
   for (const p of S.props) scene.remove(p.mesh);
   for (const e of S.enemies) scene.remove(e.mesh);
   for (const s of S.shots) scene.remove(s.mesh);
-  S.props.length = 0; S.enemies.length = 0; S.shots.length = 0;
+  for (const r of S.rockets) scene.remove(r.mesh);
+  S.props.length = 0; S.enemies.length = 0; S.shots.length = 0; S.rockets.length = 0;
   dropHeld(); updateHUD();
 }
 function renderMenu(){
@@ -976,6 +1097,8 @@ addEventListener('keydown', e=>{
   if (e.code === 'Tab'){ e.preventDefault(); toggleLobbyMenu(); }
   if (e.code === 'Digit1') uiSpawn('hands');
   if (e.code === 'Digit2') uiSpawn('blaster');
+  if (e.code === 'Digit3') uiSpawn('scatter');
+  if (e.code === 'Digit4') uiSpawn('rocket');
   if (e.code === 'KeyR' && S.held){ S.held.vel.set(0,1,0); dropHeld(); }
 });
 addEventListener('keyup', e=> keys[e.code] = false);
@@ -1003,7 +1126,7 @@ const aimRay = new THREE.Raycaster();
 function spawnAimFrom(o, d, kind){
   aimRay.set(o, d); aimRay.far = 60;
   const hits = aimRay.intersectObjects(mapGroup.children, true);
-  const radius = kind === 'ball' ? 0.45 : 0.55;
+  const radius = PROP_RADIUS[kind] || 0.55;
   let p;
   if (hits.length){
     const h = hits[0];
@@ -1046,6 +1169,16 @@ renderer.domElement.addEventListener('mousedown', e=>{
       const o = new THREE.Vector3(); camera.getWorldPosition(o);
       fireShot(o, d);
       blasterKick = 1;
+    } else if (S.equipped === 'scatter'){
+      const d = new THREE.Vector3(); camera.getWorldDirection(d);
+      const o = new THREE.Vector3(); camera.getWorldPosition(o);
+      fireScatter(o, d);
+      scatterKick = 1;
+    } else if (S.equipped === 'rocket'){
+      const d = new THREE.Vector3(); camera.getWorldDirection(d);
+      const o = new THREE.Vector3(); camera.getWorldPosition(o);
+      fireRocket(o, d);
+      rocketKick = 1;
     } else if (S.equipped === 'spawner'){
       spawnAim(S.ammo);
       spawnerKick = 1;
@@ -1061,7 +1194,7 @@ renderer.domElement.addEventListener('mousedown', e=>{
     }
   }
 });
-let blasterKick = 0, spawnerKick = 0;
+let blasterKick = 0, spawnerKick = 0, scatterKick = 0, rocketKick = 0;
 
 const playerVel = new THREE.Vector3();
 let onGround = true;
@@ -1096,6 +1229,12 @@ function stepPlayerPC(dt){
   if (spawnerKick > 0){ spawnerKick = Math.max(0, spawnerKick - dt*7);
     spawner.position.z = -0.55 + spawnerKick*0.09; }
   else spawner.position.z = -0.55;
+  if (scatterKick > 0){ scatterKick = Math.max(0, scatterKick - dt*7);
+    scattergun.position.z = -0.55 + scatterKick*0.12; }
+  else scattergun.position.z = -0.55;
+  if (rocketKick > 0){ rocketKick = Math.max(0, rocketKick - dt*7);
+    rocketgun.position.z = -0.55 + rocketKick*0.16; }
+  else rocketgun.position.z = -0.55;
 }
 
 /* ============================== VR ============================== */
@@ -1143,14 +1282,14 @@ function drawPanel(){
     panelHits.push({ x, y, w, h, kind:'__tab:'+cat });
   });
   MENU[S.menuCat].forEach(([kind, label], i)=>{
-    const x = 14 + (i%2)*242, y = 120 + Math.floor(i/2)*78, w = 228, h = 64;
+    const x = 14 + (i%3)*162, y = 120 + Math.floor(i/3)*68, w = 154, h = 56;
     const sel = S.equipped === 'spawner' && AMMO_KINDS.includes(kind) && kind === S.ammo;
     c.fillStyle = sel ? 'rgba(34,197,94,.45)' : 'rgba(255,255,255,.1)';
     c.beginPath(); c.roundRect(x,y,w,h,12); c.fill();
     if (sel){ c.strokeStyle = '#22c55e'; c.lineWidth = 3;
       c.beginPath(); c.roundRect(x,y,w,h,12); c.stroke(); }
-    c.fillStyle = '#fff'; c.font = '24px sans-serif';
-    c.fillText(label, x+w/2, y+41);
+    c.fillStyle = '#fff'; c.font = '21px sans-serif';
+    c.fillText(label, x+w/2, y+36);
     panelHits.push({ x, y, w, h, kind });
   });
   c.fillStyle = '#8b8e99'; c.font = '19px sans-serif';
@@ -1295,6 +1434,8 @@ ctrl.forEach((c, i)=>{
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
       if (S.equipped === 'spawner') spawnAimFrom(o, d, S.ammo);
+      else if (S.equipped === 'scatter') fireScatter(o, d);
+      else if (S.equipped === 'rocket') fireRocket(o, d);
       else fireShot(o, d);
     }
   });
@@ -1403,7 +1544,7 @@ renderer.xr.addEventListener('sessionstart', ()=>{
   $('menu').classList.add('hidden'); $('menubtn').classList.add('hidden');
   $('lobbybtn').classList.add('hidden'); $('lobbymenu').classList.add('hidden');
   menuPanel.visible = false;
-  blaster.visible = false;
+  blaster.visible = false; scattergun.visible = false; rocketgun.visible = false;
   placeSpawnerGun();
   spawner.visible = (S.equipped === 'spawner');
   $('hud').classList.remove('hidden'); $('cross').classList.add('hidden');
@@ -1423,6 +1564,8 @@ renderer.xr.addEventListener('sessionend', ()=>{
   $('lobbybtn').classList.remove('hidden');
   menuPanel.visible = false;
   blaster.visible = (S.equipped === 'blaster');
+  scattergun.visible = (S.equipped === 'scatter');
+  rocketgun.visible = (S.equipped === 'rocket');
   placeSpawnerGun();
   spawner.visible = (S.equipped === 'spawner');
   renderMenu();
@@ -1436,7 +1579,7 @@ const tmpV = new THREE.Vector3();
 renderer.setAnimationLoop(()=>{
   const dt = Math.min(clock.getDelta(), 0.05);
   if (S.playing){
-    stepProps(dt); stepCollisions(); stepShots(dt); stepBursts(dt);
+    stepProps(dt); stepCollisions(); stepShots(dt); stepRockets(dt); stepBursts(dt);
     if (dmgCooldown > 0) dmgCooldown -= dt;
     camera.getWorldPosition(tmpV);
     stepEnemies(dt, tmpV);
