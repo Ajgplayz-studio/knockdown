@@ -604,6 +604,10 @@ const ENEMY_TYPES = {
   bot:    { icon:'👾', r:0.55, color:0xdc2626, speed:[2.6,4.0], dmg:10, hp:3 },
   runner: { icon:'🏃', r:0.38, color:0x22d3ee, speed:[4.5,6.5], dmg:5,  hp:2 },
   brute:  { icon:'🦍', r:0.9,  color:0x7c3aed, speed:[1.2,1.8], dmg:25, hp:6 },
+  spider: { icon:'🕷️', r:0.3,  color:0x1f2937, speed:[5.5,7.5], dmg:5,  hp:1,  move:'zigzag' },
+  ghost:  { icon:'👻', r:0.5,  color:0xe2e8f0, speed:[2.0,3.0], dmg:15, hp:4,  move:'float', ghost:true },
+  bat:    { icon:'🦇', r:0.35, color:0x92400e, speed:[4.0,6.0], dmg:8,  hp:2,  move:'fly' },
+  tank:   { icon:'🐢', r:1.1,  color:0x166534, speed:[0.8,1.2], dmg:30, hp:10 },
 };
 const SPEED_STEPS = [0.5, 1, 1.5, 2];
 function makeEnemy(type, at){
@@ -646,7 +650,8 @@ function makeEnemy(type, at){
   scene.add(g);
   const bot = { mesh:g, body, t:Math.random()*10, r, type, icon:T.icon,
     speed:T.speed[0] + Math.random()*(T.speed[1]-T.speed[0]), dmg:T.dmg,
-    hp:T.hp, maxhp:T.hp, flash:0 };
+    hp:T.hp, maxhp:T.hp, flash:0, move:T.move || 'hop' };
+  if (T.ghost){ body.material.transparent = true; body.material.opacity = 0.65; }
   S.enemies.push(bot);
   sfx.spawn(); updateHUD();
   return bot;
@@ -934,7 +939,18 @@ function stepEnemies(dt, playerPos){
     const to = new THREE.Vector3().subVectors(playerPos, e.mesh.position); to.y = 0;
     const dist = to.length();
     if (dist > 0.01){ to.normalize(); e.mesh.position.addScaledVector(to, Math.min(e.speed*S.settings.speed*dt, dist)); }
-    e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*7))*0.28;   // hop
+    const perp = new THREE.Vector3(-to.z, 0, to.x);
+    if (e.move === 'zigzag'){           // spider: strafes side to side while hopping
+      e.mesh.position.addScaledVector(perp, Math.sin(e.t*6)*e.speed*S.settings.speed*dt*0.8);
+      e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*10))*0.2;
+    } else if (e.move === 'float'){     // ghost: hovers, no hopping
+      e.mesh.position.y = e.r + 0.6 + Math.sin(e.t*2.5)*0.35;
+    } else if (e.move === 'fly'){       // bat: flies high, wobbles erratically
+      e.mesh.position.addScaledVector(perp, Math.sin(e.t*9)*e.speed*S.settings.speed*dt*0.5);
+      e.mesh.position.y = e.r + 1.6 + Math.sin(e.t*4)*0.5;
+    } else {                            // hop
+      e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*7))*0.28;
+    }
     e.mesh.rotation.y = Math.atan2(to.x, to.z);
     // bump + damage the player when close
     if (dist < 1.8 + e.r){
@@ -985,12 +1001,14 @@ const MENU = {
   props:[ ['box','🟦 Box'], ['ball','🔴 Ball'], ['barrel','🛢️ Barrel'], ['cone','🔶 Cone'],
     ['tire','🛞 Tire'], ['plank','🪵 Plank'], ['beachball','🏐 Beach Ball'],
     ['crate','📦 Crate'], ['bowling','🎳 Bowling'], ['rock','🪨 Rock'] ],
-  enemies:[ ['bot','👾 Bot'], ['runner','🏃 Runner'], ['brute','🦍 Brute'] ],
+  enemies:[ ['bot','👾 Bot'], ['runner','🏃 Runner'], ['brute','🦍 Brute'],
+    ['spider','🕷️ Spider'], ['ghost','👻 Ghost'], ['bat','🦇 Bat'], ['tank','🐢 Tank'] ],
   powers:[ ['lowg','🌙 Low-G'], ['grow','🔍 Grow'], ['shrink','🔎 Shrink'], ['clear','🧹 Clear'] ],
 };
-const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','crate','bowling','rock','bot','runner','brute'];
+const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','crate','bowling','rock','bot','runner','brute','spider','ghost','bat','tank'];
 const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', tire:'🛞', plank:'🪵',
-  beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', bot:'👾', runner:'🏃', brute:'🦍' };
+  beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', bot:'👾', runner:'🏃', brute:'🦍',
+  spider:'🕷️', ghost:'👻', bat:'🦇', tank:'🐢' };
 function placeSpawnerGun(){
   // PC: gun floats by the camera. VR: gun rides the right hand's laser pointer,
   // so the model, the laser, and the spawn ray all agree.
