@@ -171,7 +171,9 @@ if (location.hostname.indexOf('github.io') !== -1) {
 <div id="host-modal" class="modal-overlay hidden">
   <div class="dialog-box">
     <h3>🖥️ Host Game Room</h3>
-    <p style="font-size:12px; color:#556; margin-bottom:8px;">Select a map to host:</p>
+    <p style="font-size:12px; color:#556; margin-bottom:6px;">Your Username:</p>
+    <input type="text" id="host-username-input" placeholder="Enter username..." autocomplete="off" />
+    <p style="font-size:12px; color:#556; margin-bottom:6px;">Select a map to host:</p>
     <select id="host-map-select">
       <option value="sandbox">🗺️ Sandbox</option>
       <option value="infinite">♾️ Infinite</option>
@@ -199,7 +201,9 @@ if (location.hostname.indexOf('github.io') !== -1) {
 <div id="join-modal" class="modal-overlay hidden">
   <div class="dialog-box">
     <h3>🌐 Join Room</h3>
-    <p style="font-size:12px; color:#556; margin-bottom:8px;">Enter the host's room code:</p>
+    <p style="font-size:12px; color:#556; margin-bottom:6px;">Your Username:</p>
+    <input type="text" id="join-username-input" placeholder="Enter username..." autocomplete="off" />
+    <p style="font-size:12px; color:#556; margin-bottom:6px;">Enter the host's room code:</p>
     <input type="text" id="join-code-input" placeholder="e.g. knd-1234" autocomplete="off" />
     <div class="btn-row">
       <button class="db-btn db-primary" id="join-confirm">Connect</button>
@@ -211,6 +215,10 @@ if (location.hostname.indexOf('github.io') !== -1) {
 <button id="lobbybtn" class="hidden">☰</button>
 <div id="lobbymenu" class="hidden">
   <h3>☰ Menu</h3>
+  <div id="lm-roomcode-box" style="background:rgba(124,255,0,0.15); border:1px solid #4fa800; border-radius:10px; padding:8px; margin-bottom:10px; text-align:center; display:none;">
+    <div style="font-size:10.5px; color:#3c4c5e; font-weight:bold;">ROOM CODE</div>
+    <div id="lm-code-text" style="font-size:15px; font-weight:bold; color:#16222f; letter-spacing:1px;">----</div>
+  </div>
   <button class="lm" id="lm-host">🖥️ Host Game</button>
   <button class="lm" id="lm-join">🌐 Join Lobby</button>
   <button class="lm" id="lm-maps">🗺️ Change Map</button>
@@ -270,14 +278,12 @@ let lastSendTime = 0;
 
 function createAvatarMesh(name, color=0x38bdf8){
   const group = new THREE.Group();
-  // Head / Avatar body
   const headMat = new THREE.MeshStandardMaterial({ color, roughness:0.4 });
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), headMat);
   head.position.y = 1.4;
   head.castShadow = true;
   group.add(head);
 
-  // Eyes
   const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const pupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
   [-0.12, 0.12].forEach(dx=>{
@@ -289,7 +295,6 @@ function createAvatarMesh(name, color=0x38bdf8){
     group.add(pupil);
   });
 
-  // Username Floating Tag Above Avatar
   const canvas = document.createElement('canvas');
   canvas.width = 256; canvas.height = 64;
   const ctx = canvas.getContext('2d');
@@ -319,6 +324,7 @@ function initPeer(customId=''){
       $('host-room-code').textContent = roomCode;
       $('host-active-modal').classList.remove('hidden');
       toast('🖥️ Room hosted successfully!');
+      renderLobbyMenu();
     }
   });
   peer.on('connection', (c)=>{
@@ -353,6 +359,7 @@ function setupConnection(){
     if (!isHost){
       toast('🌐 Successfully joined room!');
       conn.send({ type: 'playerTransform', name: S.username, x: rig.position.x, y: rig.position.y, z: rig.position.z, ry: rig.rotation.y });
+      renderLobbyMenu();
     }
   });
 }
@@ -1419,6 +1426,13 @@ function renderLobbyMenu(){
   $('lm-settinglist').classList.toggle('hidden', !S.menuSettings);
   $('lm-damage').textContent = S.settings.damage ? '💔 Take damage: ON' : '🤍 Take damage: OFF';
   $('lm-speed').textContent = '🐌 Monster speed: ' + S.settings.speed + 'x';
+
+  if (roomCode){
+    $('lm-roomcode-box').style.display = 'block';
+    $('lm-code-text').textContent = roomCode;
+  } else {
+    $('lm-roomcode-box').style.display = 'none';
+  }
 }
 function toggleLobbyMenu(force){
   const m = $('lobbymenu');
@@ -1443,12 +1457,15 @@ $('lm-speed').onclick = ()=>{
 /* --- Host & Join UI bindings --- */
 $('lm-host').onclick = ()=>{
   toggleLobbyMenu(false);
+  $('host-username-input').value = S.username;
   $('host-modal').classList.remove('hidden');
 };
 $('host-cancel').onclick = ()=>{
   $('host-modal').classList.add('hidden');
 };
 $('host-confirm').onclick = ()=>{
+  const uname = $('host-username-input').value.trim();
+  if (uname) S.username = uname;
   const mapName = $('host-map-select').value;
   $('host-modal').classList.add('hidden');
   isHost = true;
@@ -1462,12 +1479,15 @@ $('host-close-info').onclick = ()=>{
 
 $('lm-join').onclick = ()=>{
   toggleLobbyMenu(false);
+  $('join-username-input').value = S.username;
   $('join-modal').classList.remove('hidden');
 };
 $('join-cancel').onclick = ()=>{
   $('join-modal').classList.add('hidden');
 };
 $('join-confirm').onclick = ()=>{
+  const uname = $('join-username-input').value.trim();
+  if (uname) S.username = uname;
   const code = $('join-code-input').value.trim();
   if (!code){ toast('⚠️ Please enter a valid room code'); return; }
   $('join-modal').classList.add('hidden');
@@ -1609,10 +1629,9 @@ function stepPlayerPC(dt){
   rig.position.z = Math.max(-S.bounds, Math.min(S.bounds, rig.position.z));
   camera.position.y += ((1.7*S.scale) - camera.position.y) * Math.min(1, dt*6);
 
-  // Send transform to peer periodically
   if (conn && conn.open){
     const now = performance.now();
-    if (now - lastSendTime > 50){ // ~20fps sync rate
+    if (now - lastSendTime > 50){
       lastSendTime = now;
       conn.send({ type: 'playerTransform', name: S.username, x: rig.position.x, y: rig.position.y, z: rig.position.z, ry: rig.rotation.y });
     }
@@ -1866,8 +1885,8 @@ function vrMenuPress(c){
   for (const h of menuHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
       if (h.kind === 'spawner'){ equipSpawner(); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
-      else if (h.kind === 'host'){ menuPanel.visible = false; $('host-modal').classList.remove('hidden'); }
-      else if (h.kind === 'join'){ menuPanel.visible = false; $('join-modal').classList.remove('hidden'); }
+      else if (h.kind === 'host'){ menuPanel.visible = false; $('host-username-input').value = S.username; $('host-modal').classList.remove('hidden'); }
+      else if (h.kind === 'join'){ menuPanel.visible = false; $('join-username-input').value = S.username; $('join-modal').classList.remove('hidden'); }
       else if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; if (S.menuMaps) S.menuSettings = false; drawVRMenu(); beep(700,.05,'triangle',.08); }
       else if (h.kind.startsWith('map:')){ loadMap(h.kind.slice(4)); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
