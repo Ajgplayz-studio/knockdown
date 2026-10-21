@@ -66,6 +66,19 @@ if (location.hostname.indexOf('github.io') !== -1) {
   #customize #cz-cancel { background:rgba(255,255,255,.6); border:1px solid rgba(22,34,47,.18); color:#3c4c5e;
     font-size:12px; padding:9px 10px; border-radius:8px; cursor:pointer; }
   #customize .hint { margin-top:8px; font-size:10.5px; color:#71808f; }
+  /* ---------- Custom modal dialogs (Host/Join) ---------- */
+  .modal-overlay { position:fixed; inset:0; background:rgba(0,0,0,.6); z-index:40; display:flex; align-items:center; justify-content:center; }
+  .modal-overlay.hidden { display:none; }
+  .dialog-box { background:rgba(233,238,245,.98); border:1px solid rgba(255,255,255,.9); border-radius:18px;
+    padding:20px; width:300px; color:#16222f; box-shadow:0 18px 60px rgba(0,0,0,.45); text-align:center; }
+  .dialog-box h3 { margin:0 0 12px; font-size:16px; text-transform:uppercase; }
+  .dialog-box select, .dialog-box input { width:100%; padding:10px; margin-bottom:12px; border-radius:8px;
+    border:1px solid rgba(22,34,47,.2); font-size:14px; box-sizing:border-box; }
+  .dialog-box .btn-row { display:flex; gap:8px; }
+  .dialog-box button.db-btn { flex:1; padding:10px; border-radius:8px; font-weight:bold; cursor:pointer; border:none; }
+  .dialog-box button.db-primary { background:#7cff00; color:#10240a; }
+  .dialog-box button.db-secondary { background:rgba(255,255,255,.6); border:1px solid rgba(22,34,47,.2); color:#3c4c5e; }
+  .code-display { font-size:24px; font-weight:bold; background:#fff; padding:10px; border-radius:8px; margin:10px 0; border:1px dashed #4fa800; letter-spacing:2px; }
   /* ---------- HUD ---------- */
   #hud { position:fixed; top:12px; left:50%; transform:translateX(-50%); z-index:15;
     display:flex; gap:10px; pointer-events:none; }
@@ -112,6 +125,8 @@ if (location.hostname.indexOf('github.io') !== -1) {
     "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
 } }
 </script>
+<!-- PeerJS for P2P multiplayer room hosting and joining -->
+<script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
 </head>
 <body>
 
@@ -151,11 +166,53 @@ if (location.hostname.indexOf('github.io') !== -1) {
   </div>
   <div class="hint">Not saved — one custom mob at a time.</div>
 </div>
+
+<!-- Host Map Prompt Modal -->
+<div id="host-modal" class="modal-overlay hidden">
+  <div class="dialog-box">
+    <h3>🖥️ Host Game Room</h3>
+    <p style="font-size:12px; color:#556; margin-bottom:8px;">Select a map to host:</p>
+    <select id="host-map-select">
+      <option value="sandbox">🗺️ Sandbox</option>
+      <option value="infinite">♾️ Infinite</option>
+      <option value="moon">🌙 Moon</option>
+      <option value="mall">🛍️ Mall</option>
+    </select>
+    <div class="btn-row">
+      <button class="db-btn db-primary" id="host-confirm">Create Room</button>
+      <button class="db-btn db-secondary" id="host-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- Host Active Room Code Modal -->
+<div id="host-active-modal" class="modal-overlay hidden">
+  <div class="dialog-box">
+    <h3>🖥️ Hosting Room</h3>
+    <p style="font-size:12px; color:#556;">Share this code with your friend to join:</p>
+    <div class="code-display" id="host-room-code">----</div>
+    <button class="db-btn db-primary" id="host-close-info">Got it!</button>
+  </div>
+</div>
+
+<!-- Join Lobby Code Prompt Modal -->
+<div id="join-modal" class="modal-overlay hidden">
+  <div class="dialog-box">
+    <h3>🌐 Join Room</h3>
+    <p style="font-size:12px; color:#556; margin-bottom:8px;">Enter the host's room code:</p>
+    <input type="text" id="join-code-input" placeholder="e.g. knd-1234" autocomplete="off" />
+    <div class="btn-row">
+      <button class="db-btn db-primary" id="join-confirm">Connect</button>
+      <button class="db-btn db-secondary" id="join-cancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <button id="lobbybtn" class="hidden">☰</button>
 <div id="lobbymenu" class="hidden">
   <h3>☰ Menu</h3>
-  <button class="lm" id="lm-host">🖥️ Host (coming soon)</button>
-  <button class="lm" id="lm-join">🌐 Join Lobby (coming soon)</button>
+  <button class="lm" id="lm-host">🖥️ Host Game</button>
+  <button class="lm" id="lm-join">🌐 Join Lobby</button>
   <button class="lm" id="lm-maps">🗺️ Change Map</button>
   <div id="lm-maplist" class="hidden">
     <button class="lm map" data-map="sandbox">🗺️ Sandbox</button>
@@ -191,15 +248,120 @@ import { VRButton } from 'three/addons/webxr/VRButton.js';
 const S = {
   playing:false, xr:false,
   gravity:9.8, lowG:false,
-  scale:1,                       // player size multiplier (grow/shrink)
-  equipped:'hands',              // 'hands' | 'blaster' | 'scatter' | 'rocket' | 'spawner'
+  scale:1,
+  equipped:'hands',
   ammo:'box',
   score:0, held:null,
   props:[], shots:[], rockets:[], enemies:[], bursts:[],
   menuCat:'weapons',
   hp:100,
   settings:{ damage:true, speed:1 },
+  username: 'Player_' + Math.floor(100 + Math.random() * 900)
 };
+
+/* ============================== multiplayer networking (PeerJS + Avatars) ============================== */
+let peer = null;
+let conn = null;
+let isHost = false;
+let roomCode = '';
+let remotePlayerMesh = null;
+let remoteUsername = 'RemotePlayer';
+let lastSendTime = 0;
+
+function createAvatarMesh(name, color=0x38bdf8){
+  const group = new THREE.Group();
+  // Head / Avatar body
+  const headMat = new THREE.MeshStandardMaterial({ color, roughness:0.4 });
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 16), headMat);
+  head.position.y = 1.4;
+  head.castShadow = true;
+  group.add(head);
+
+  // Eyes
+  const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const pupilMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+  [-0.12, 0.12].forEach(dx=>{
+    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 8), eyeMat);
+    eye.position.set(dx, 1.45, 0.32);
+    group.add(eye);
+    const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.035, 8, 8), pupilMat);
+    pupil.position.set(dx, 1.45, 0.38);
+    group.add(pupil);
+  });
+
+  // Username Floating Tag Above Avatar
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(10, 15, 25, 0.75)';
+  ctx.beginPath(); ctx.roundRect(0, 0, 256, 64, 16); ctx.fill();
+  ctx.strokeStyle = '#7cff00'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.roundRect(2, 2, 252, 60, 14); ctx.stroke();
+  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 28px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(name, 128, 34);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(1.2, 0.3, 1);
+  sprite.position.y = 2.1;
+  group.add(sprite);
+
+  return group;
+}
+
+function initPeer(customId=''){
+  if (peer) peer.destroy();
+  peer = new Peer(customId);
+  peer.on('open', (id)=>{
+    roomCode = id;
+    if (isHost){
+      $('host-room-code').textContent = roomCode;
+      $('host-active-modal').classList.remove('hidden');
+      toast('🖥️ Room hosted successfully!');
+    }
+  });
+  peer.on('connection', (c)=>{
+    conn = c;
+    setupConnection();
+    toast('🌐 A player connected to your room!');
+  });
+  peer.on('error', (err)=>{
+    toast('❌ Connection error: ' + err.type);
+  });
+}
+
+function setupConnection(){
+  if (!conn) return;
+  conn.on('data', (data)=>{
+    if (data.type === 'syncMap'){
+      loadMap(data.map, true);
+      toast('🗺️ Host changed map to: ' + data.map);
+    } else if (data.type === 'spawnProp'){
+      addProp(data.kind, new THREE.Vector3(data.pos.x, data.pos.y, data.pos.z), true);
+    } else if (data.type === 'playerTransform'){
+      remoteUsername = data.name || 'Player';
+      if (!remotePlayerMesh){
+        remotePlayerMesh = createAvatarMesh(remoteUsername, 0xf43f5e);
+        scene.add(remotePlayerMesh);
+      }
+      remotePlayerMesh.position.set(data.x, data.y, data.z);
+      remotePlayerMesh.rotation.y = data.ry || 0;
+    }
+  });
+  conn.on('open', ()=>{
+    if (!isHost){
+      toast('🌐 Successfully joined room!');
+      conn.send({ type: 'playerTransform', name: S.username, x: rig.position.x, y: rig.position.y, z: rig.position.z, ry: rig.rotation.y });
+    }
+  });
+}
+
+function broadcastData(data){
+  if (conn && conn.open){
+    conn.send(data);
+  }
+}
 
 /* ============================== audio (tiny synth) ============================== */
 let AC = null;
@@ -241,7 +403,7 @@ scene.fog = new THREE.Fog(0x8fc3ee, 45, 150);
 
 const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 400);
 camera.position.y = 1.7;
-const rig = new THREE.Group();          // player rig: moved by WASD (PC) or thumbstick (VR)
+const rig = new THREE.Group();
 rig.add(camera);
 rig.position.set(0, 0, 14);
 scene.add(rig);
@@ -256,8 +418,8 @@ sun.shadow.camera.top = 60; sun.shadow.camera.bottom = -60;
 scene.add(sun);
 
 /* ============================== maps: lobby + sandbox ============================== */
-const ARENA = 44;                 // sandbox half-size
-let mapGroup = null;            // holds the current map's static geometry
+const ARENA = 44;
+let mapGroup = null;
 S.map = 'lobby'; S.bounds = 9; S.menuMaps = false; S.menuSettings = false;
 const MAPS = [
   { id:'lobby', name:'👋 Lobby' },
@@ -266,8 +428,7 @@ const MAPS = [
   { id:'moon', name:'🌙 Moon' },
   { id:'mall', name:'🛍️ Mall' },
 ];
-let followGround = null, followGrid = null;   // infinite map: ground follows the player
-// starfield (toggled per map)
+let followGround = null, followGrid = null;
 const starField = (()=>{
   const pos = [];
   for (let i=0;i<900;i++){
@@ -284,7 +445,6 @@ function setSky(bg, fogNear, fogFar, stars){
   scene.fog.color.set(bg); scene.fog.near = fogNear; scene.fog.far = fogFar;
   starField.visible = stars;
 }
-// canvas text texture helper for signs
 function textTex(lines, W, H, bg, colors, fonts){
   const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
   const cx = cv.getContext('2d');
@@ -300,7 +460,6 @@ function textTex(lines, W, H, bg, colors, fonts){
 function clearMapGroup(){ if (mapGroup){ scene.remove(mapGroup); mapGroup = null; } }
 
 function buildSandbox(){
-  // ground with grid
   const g = new THREE.Mesh(
     new THREE.PlaneGeometry(ARENA*2+40, ARENA*2+40),
     new THREE.MeshStandardMaterial({ color:0x4a7c43, roughness:1 })
@@ -310,7 +469,6 @@ function buildSandbox(){
   grid.material.transparent = true; grid.material.opacity = 0.12;
   grid.position.y = 0.02; mapGroup.add(grid);
 
-  // low boundary walls
   const wallMat = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.7 });
   const mkWall = (w,d,x,z)=>{
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, 1.6, d), wallMat);
@@ -319,14 +477,12 @@ function buildSandbox(){
   mkWall(ARENA*2+4, 1, 0, -ARENA-1); mkWall(ARENA*2+4, 1, 0, ARENA+1);
   mkWall(1, ARENA*2+4, -ARENA-1, 0);  mkWall(1, ARENA*2+4, ARENA+1, 0);
 
-  // a few static crates for cover / fun
   const crateMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 });
   [[-12,-8,3],[10,-14,2.2],[-6,10,2.6],[16,8,3.4],[-18,14,2]].forEach(([x,z,sz])=>{
     const c = new THREE.Mesh(new THREE.BoxGeometry(sz,sz,sz), crateMat);
     c.position.set(x, sz/2, z); c.castShadow = true; c.receiveShadow = true; mapGroup.add(c);
   });
 
-  // floating "KNOCKDOWN" sign
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 160;
   const cx = cv.getContext('2d');
   cx.fillStyle = '#0d2038'; cx.fillRect(0,0,1024,160);
@@ -340,15 +496,14 @@ function buildSandbox(){
 }
 
 function buildLobby(){
-  const L = 10;   // room half-size
-  // floor
+  const L = 10;
   const g = new THREE.Mesh(new THREE.PlaneGeometry(L*2+2, L*2+2),
     new THREE.MeshStandardMaterial({ color:0x2e3552, roughness:1 }));
   g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
   const grid = new THREE.GridHelper(L*2+2, 22, 0x8f9bff, 0x8f9bff);
   grid.material.transparent = true; grid.material.opacity = 0.1;
   grid.position.y = 0.02; mapGroup.add(grid);
-  // walls with orange trim
+
   const wallMat = new THREE.MeshStandardMaterial({ color:0x232842, roughness:.9 });
   const trimMat = new THREE.MeshStandardMaterial({ color:0xff6a2b, roughness:.6 });
   const mkWall = (w,d,x,z)=>{
@@ -359,7 +514,7 @@ function buildLobby(){
   };
   mkWall(L*2+2, 1, 0, -L-0.5); mkWall(L*2+2, 1, 0, L+0.5);
   mkWall(1, L*2+2, -L-0.5, 0); mkWall(1, L*2+2, L+0.5, 0);
-  // big KNOCKDOWN sign on the back wall
+
   const cv = document.createElement('canvas'); cv.width = 1024; cv.height = 300;
   const cx = cv.getContext('2d');
   cx.fillStyle = '#0d2038'; cx.fillRect(0,0,1024,300);
@@ -374,7 +529,7 @@ function buildLobby(){
   const sign = new THREE.Mesh(new THREE.PlaneGeometry(11, 3.2),
     new THREE.MeshBasicMaterial({ map:tex }));
   sign.position.set(0, 3.1, -L+0.06); mapGroup.add(sign);
-  // a few static crates for decoration
+
   const crateMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:.9 });
   [[-7,-7,1.6],[7.5,-6,2],[-7,7,1.8]].forEach(([x,z,sz])=>{
     const c = new THREE.Mesh(new THREE.BoxGeometry(sz,sz,sz), crateMat);
@@ -382,9 +537,7 @@ function buildLobby(){
   });
 }
 
-
 function buildInfinite(){
-  // endless night plain: ground + grid follow the player, nothing else here
   followGround = new THREE.Mesh(
     new THREE.PlaneGeometry(400, 400),
     new THREE.MeshStandardMaterial({ color:0x0d1428, roughness:1 })
@@ -397,18 +550,15 @@ function buildInfinite(){
 }
 
 function buildMoon(){
-  // gray ground
   const g = new THREE.Mesh(new THREE.PlaneGeometry(180, 180),
     new THREE.MeshStandardMaterial({ color:0x8f9296, roughness:1 }));
   g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
-  // craters: dark discs
   const craterMat = new THREE.MeshStandardMaterial({ color:0x5f6266, roughness:1 });
   [[-14,-6,5],[10,-18,7],[22,4,4],[-24,12,6],[4,20,5],[-8,-26,4],[28,-10,6],[-30,-14,5],[14,28,7],[-4,8,3]]
   .forEach(([x,z,r])=>{
     const c = new THREE.Mesh(new THREE.CircleGeometry(r, 24), craterMat);
     c.rotation.x = -Math.PI/2; c.position.set(x, 0.015, z); c.receiveShadow = true; mapGroup.add(c);
   });
-  // scattered rocks
   const rockMat = new THREE.MeshStandardMaterial({ color:0x6e7175, roughness:1 });
   for (let i=0;i<14;i++){
     const s = 0.4 + Math.random()*1.6;
@@ -418,7 +568,6 @@ function buildMoon(){
     rock.rotation.set(Math.random()*3, Math.random()*3, Math.random()*3);
     rock.castShadow = true; mapGroup.add(rock);
   }
-  // distant mountain ring
   const mMat = new THREE.MeshStandardMaterial({ color:0x565a5f, roughness:1 });
   for (let i=0;i<12;i++){
     const a = (i/12)*Math.PI*2 + 0.2;
@@ -427,14 +576,12 @@ function buildMoon(){
     m.position.set(Math.cos(a)*62, h/2 - 0.5, Math.sin(a)*62);
     mapGroup.add(m);
   }
-  // Earth in the sky
   const earth = new THREE.Mesh(new THREE.SphereGeometry(7, 24, 24),
     new THREE.MeshBasicMaterial({ color:0x4a90d9 }));
   earth.position.set(-70, 85, -140); mapGroup.add(earth);
   const glow = new THREE.Mesh(new THREE.SphereGeometry(7.8, 24, 24),
     new THREE.MeshBasicMaterial({ color:0x9fd0ff, transparent:true, opacity:0.25 }));
   glow.position.copy(earth.position); mapGroup.add(glow);
-  // little flag
   const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 3, 8),
     new THREE.MeshStandardMaterial({ color:0xcccccc }));
   pole.position.set(3, 1.5, 8); mapGroup.add(pole);
@@ -444,15 +591,12 @@ function buildMoon(){
 }
 
 function buildMall(){
-  // modeled on Downshot's Mall: concrete plane + road outside, big empty mall building ahead
-  // concrete apron
   const g = new THREE.Mesh(new THREE.PlaneGeometry(150, 150),
     new THREE.MeshStandardMaterial({ color:0xa3a3a3, roughness:1 }));
   g.rotation.x = -Math.PI/2; g.receiveShadow = true; mapGroup.add(g);
   const grid = new THREE.GridHelper(150, 60, 0x777777, 0x777777);
   grid.material.transparent = true; grid.material.opacity = 0.08;
   grid.position.y = 0.02; mapGroup.add(grid);
-  // road to the right of spawn
   const road = new THREE.Mesh(new THREE.PlaneGeometry(9, 130),
     new THREE.MeshStandardMaterial({ color:0x3f3f3f, roughness:1 }));
   road.rotation.x = -Math.PI/2; road.position.set(20, 0.015, -10); road.receiveShadow = true; mapGroup.add(road);
@@ -462,22 +606,18 @@ function buildMall(){
     dash.rotation.x = -Math.PI/2; dash.position.set(20, 0.03, z); mapGroup.add(dash);
   }
 
-  // ---- the mall building ----
   const wallMat = new THREE.MeshStandardMaterial({ color:0xc9c2b4, roughness:.95 });
-  const BX = 30, FZ = -32, BZ = -62, H = 9;   // half-width, front z, back z, height
+  const BX = 30, FZ = -32, BZ = -62, H = 9;
   const mkWall = (w,h,d,x,y,z,mat)=>{
     const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d), mat || wallMat);
     m.position.set(x,y,z); m.castShadow = true; m.receiveShadow = true; mapGroup.add(m); return m;
   };
-  // back + side walls
   mkWall(BX*2+2, H, 1, 0, H/2, BZ);
   mkWall(1, H, FZ-BZ+1, -BX-0.5, H/2, (FZ+BZ)/2);
   mkWall(1, H, FZ-BZ+1, BX+0.5, H/2, (FZ+BZ)/2);
-  // front facade with 3 door gaps (5 wide each, centered at -15, 0, 15)
   [[-30,-17.5],[-12.5,-2.5],[2.5,12.5],[17.5,30]].forEach(([a,b])=>{
     mkWall(b-a, H, 1, (a+b)/2, H/2, FZ);
   });
-  // warning signs boarding up the left and right doors
   const warnTex = textTex(['⚠️ WARNING ⚠️','DO NOT ENTER'], 512, 200, '#c9a227', '#1a1a1a',
     ['bold 72px sans-serif','bold 44px sans-serif']);
   const boardMat = new THREE.MeshStandardMaterial({ color:0x9a6b3f, roughness:1 });
@@ -490,14 +630,11 @@ function buildMall(){
       b.position.set(dx+off, 1.8, FZ+0.55); b.rotation.z = off*0.1; mapGroup.add(b);
     });
   });
-  // big MALL sign on the facade
   const msign = new THREE.Mesh(new THREE.PlaneGeometry(20, 3.4),
     new THREE.MeshBasicMaterial({ map:textTex(['🛍️ MALL'], 1024, 180, '#141a30', '#ff8c42', 'bold 110px sans-serif') }));
   msign.position.set(0, H+1.4, FZ+0.6); mapGroup.add(msign);
 
-  // ---- interior: open lobby, then three back rooms ----
-  const RZ = -46;   // lobby/back-room divider
-  // divider wall with 3 openings (8 wide, centered at -20, 0, 20)
+  const RZ = -46;
   [[-30,-24],[-16,-4],[4,16],[24,30]].forEach(([a,b])=>{
     mkWall(b-a, H, 1, (a+b)/2, H/2, RZ);
   });
@@ -508,13 +645,11 @@ function buildMall(){
   };
   roomSign('🍽️ FOOD COURT', -20);
   roomSign('🛍️ SHOPS', 20);
-  // occasional pillars (lobby + rooms), mostly empty otherwise
   const pilMat = new THREE.MeshStandardMaterial({ color:0xd8d2c4, roughness:.9 });
   [[-22,-38],[22,-38],[-14,-52],[14,-52],[-24,-56],[24,-56]].forEach(([x,z])=>{
     const p = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.8, H, 12), pilMat);
     p.position.set(x, H/2, z); p.castShadow = true; mapGroup.add(p);
   });
-  // dining set in the food court room
   const tableMat = new THREE.MeshStandardMaterial({ color:0x7a5230, roughness:.8 });
   const chairMat = new THREE.MeshStandardMaterial({ color:0x3f5a7a, roughness:.8 });
   const diningSet = (x, z)=>{
@@ -533,7 +668,6 @@ function buildMall(){
     });
   };
   diningSet(-20, -54); diningSet(-16.5, -50);
-  // escalator in the middle back room, rising to a blocked upper door
   const escMat = new THREE.MeshStandardMaterial({ color:0x555b66, roughness:.6, metalness:.3 });
   const railMat = new THREE.MeshStandardMaterial({ color:0x22262e, roughness:.4 });
   const escLen = 9, escAng = Math.atan2(3.4, escLen);
@@ -547,13 +681,12 @@ function buildMall(){
     const rail = new THREE.Mesh(new THREE.BoxGeometry(0.18, 1.0, escLen+1), railMat);
     rail.position.set(off, 2.2, -52 - escLen/2); rail.rotation.x = escAng; mapGroup.add(rail);
   });
-  // blocked upper doorway at the top of the escalator
   const upDoor = new THREE.Mesh(new THREE.PlaneGeometry(3.4, 3),
     new THREE.MeshBasicMaterial({ map:warnTex }));
   upDoor.position.set(0, 4.6, BZ+0.6); mapGroup.add(upDoor);
 }
 
-function loadMap(name){
+function loadMap(name, localOnly=false){
   clearAll();
   clearMapGroup();
   mapGroup = new THREE.Group(); scene.add(mapGroup);
@@ -582,6 +715,10 @@ function loadMap(name){
   updateHUD(); renderLobbyMenu(); drawVRMenu();
   const mi = MAPS.find(m=>m.id===name);
   toast(name === 'lobby' ? '👋 Welcome to the lobby' : (mi ? mi.name : name));
+
+  if (isHost && !localOnly){
+    broadcastData({ type:'syncMap', map:name });
+  }
 }
 
 /* ============================== spawn helpers ============================== */
@@ -609,7 +746,7 @@ function spawnPoint(dist=3.2){
   p.addScaledVector(d, dist); p.y = Math.max(1.1, camera.position.y);
   return p;
 }
-function addProp(kind, at){
+function addProp(kind, at, fromNetwork=false){
   let mesh;
   const pm = propMats;
   if (kind === 'ball') mesh = new THREE.Mesh(new THREE.SphereGeometry(0.45, 20, 16), pm.ball);
@@ -644,6 +781,10 @@ function addProp(kind, at){
   const prop = { mesh, vel:new THREE.Vector3((Math.random()-.5)*2, 2, (Math.random()-.5)*2), radius, kind, grabbedBy:null };
   S.props.push(prop);
   sfx.spawn(); updateHUD();
+
+  if (!fromNetwork && conn && conn.open){
+    broadcastData({ type:'spawnProp', kind:kind, pos:{ x:mesh.position.x, y:mesh.position.y, z:mesh.position.z } });
+  }
   return prop;
 }
 const ENEMY_TYPES = {
@@ -672,8 +813,6 @@ function makeEnemy(type, at, ov){
     p.position.set(sgn*r*0.35, r*0.25, r*0.95); g.add(p);
   });
   const p = at || spawnPoint(5);
-  // never spawn on top of the player: enforce a minimum distance, pushed out
-  // along the direction from the player (keeps the aimed direction for gun spawns)
   {
     const MIN_D = 6;
     let dx = p.x - rig.position.x, dz = p.z - rig.position.z;
@@ -795,7 +934,7 @@ function stepRockets(dt){
   }
 }
 
-/* ============================== blaster (held gun, PC) ============================== */
+/* ============================== guns & items ============================== */
 const blaster = new THREE.Group();
 {
   const bodyM = new THREE.MeshStandardMaterial({ color:0x23262e, roughness:.4, metalness:.5 });
@@ -813,7 +952,6 @@ const blaster = new THREE.Group();
   camera.add(blaster);
 }
 
-/* ============================== spawner gun (held gun, PC) ============================== */
 const spawner = new THREE.Group();
 {
   const bodyM = new THREE.MeshStandardMaterial({ color:0x1e3a2a, roughness:.4, metalness:.5 });
@@ -831,7 +969,6 @@ const spawner = new THREE.Group();
   camera.add(spawner);
 }
 
-/* ============================== scattergun (held gun, PC) ============================== */
 const scattergun = new THREE.Group();
 {
   const bodyM = new THREE.MeshStandardMaterial({ color:0x3a2e1e, roughness:.5, metalness:.4 });
@@ -853,7 +990,6 @@ const scattergun = new THREE.Group();
   camera.add(scattergun);
 }
 
-/* ============================== rocket launcher (held gun, PC) ============================== */
 const rocketgun = new THREE.Group();
 {
   const bodyM = new THREE.MeshStandardMaterial({ color:0x4a1f1f, roughness:.5, metalness:.4 });
@@ -881,7 +1017,6 @@ function stepProps(dt){
     if (p.grabbedBy) continue;
     p.vel.y -= g * dt;
     p.mesh.position.addScaledVector(p.vel, dt);
-    // spin a little while flying
     if (p.vel.lengthSq() > 1){ p.mesh.rotation.x += dt*1.5; p.mesh.rotation.z += dt*1.1; }
     const r = p.radius, pos = p.mesh.position;
     if (pos.y < r){ pos.y = r; if (p.vel.y < 0) p.vel.y *= -0.45;
@@ -890,7 +1025,6 @@ function stepProps(dt){
     if (Math.abs(pos.x) > S.bounds){ pos.x = Math.sign(pos.x)*S.bounds; p.vel.x *= -0.6; }
     if (Math.abs(pos.z) > S.bounds){ pos.z = Math.sign(pos.z)*S.bounds; p.vel.z *= -0.6; }
   }
-  // potions: walk into one (or grab it) to drink it
   if (S.hp < 100){
     camera.getWorldPosition(tmpV);
     for (let i = S.props.length-1; i >= 0; i--){
@@ -900,7 +1034,6 @@ function stepProps(dt){
     }
   }
 }
-/* ---------- object collision: props vs props, props vs enemies ---------- */
 function resolveSpherePair(pa, va, ra, pb, vb, rb, bStatic){
   const dx = pb.x - pa.x, dy = pb.y - pa.y, dz = pb.z - pa.z;
   const rr = ra + rb, d2 = dx*dx + dy*dy + dz*dz;
@@ -950,7 +1083,7 @@ function healPlayer(amount){
   return true;
 }
 function drinkPotion(p){
-  if (!healPlayer(30)) return false;   // full HP (or dead): leave the potion alone
+  if (!healPlayer(30)) return false;
   const i = S.props.indexOf(p);
   if (i >= 0) S.props.splice(i, 1);
   if (S.held === p){ S.held = null; }
@@ -986,14 +1119,12 @@ function stepShots(dt){
     s.mesh.position.addScaledVector(s.vel, dt);
     let dead = s.life <= 0 || s.mesh.position.y < 0;
     if (!dead){
-      // vs enemies
       for (let j = S.enemies.length-1; j >= 0; j--){
         const e = S.enemies[j];
         if (s.mesh.position.distanceToSquared(e.mesh.position) < 1.1){ hurtEnemy(e); dead = true; break; }
       }
     }
     if (!dead){
-      // vs props: knock them flying
       for (const p of S.props){
         if (p.grabbedBy) continue;
         const rr = p.radius + 0.2;
@@ -1017,19 +1148,18 @@ function stepEnemies(dt, playerPos){
     const dist = to.length();
     if (dist > 0.01){ to.normalize(); e.mesh.position.addScaledVector(to, Math.min(e.speed*S.settings.speed*dt, dist)); }
     const perp = new THREE.Vector3(-to.z, 0, to.x);
-    if (e.move === 'zigzag'){           // spider: strafes side to side while hopping
+    if (e.move === 'zigzag'){
       e.mesh.position.addScaledVector(perp, Math.sin(e.t*6)*e.speed*S.settings.speed*dt*0.8);
       e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*10))*0.2;
-    } else if (e.move === 'float'){     // ghost: hovers, no hopping
+    } else if (e.move === 'float'){
       e.mesh.position.y = e.r + 0.6 + Math.sin(e.t*2.5)*0.35;
-    } else if (e.move === 'fly'){       // bat: flies high, wobbles erratically
+    } else if (e.move === 'fly'){
       e.mesh.position.addScaledVector(perp, Math.sin(e.t*9)*e.speed*S.settings.speed*dt*0.5);
       e.mesh.position.y = e.r + 1.6 + Math.sin(e.t*4)*0.5;
-    } else {                            // hop
+    } else {
       e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*7))*0.28;
     }
     e.mesh.rotation.y = Math.atan2(to.x, to.z);
-    // bump + damage the player when close
     if (dist < 1.8 + e.r){
       if (!S.xr){
         const away = new THREE.Vector3().subVectors(playerPos, e.mesh.position).setY(0).normalize();
@@ -1038,7 +1168,7 @@ function stepEnemies(dt, playerPos){
         if (e.lastBump > 0.6){ e.lastBump = 0; beep(160, .07, 'sawtooth', .07); }
       }
       if (S.settings.damage && dmgCooldown <= 0){
-        if (damagePlayer(e.dmg)) break;   // died -> map reloaded, stop iterating
+        if (damagePlayer(e.dmg)) break;
       }
     }
     if (Math.abs(e.mesh.position.x) > S.bounds) e.mesh.position.x = Math.sign(e.mesh.position.x)*S.bounds;
@@ -1087,12 +1217,10 @@ const AMMO_KINDS = ['box','ball','barrel','cone','tire','plank','beachball','cra
 const AMMO_ICON = { box:'🟦', ball:'🔴', barrel:'🛢️', cone:'🔶', tire:'🛞', plank:'🪵',
   beachball:'🏐', crate:'📦', bowling:'🎳', rock:'🪨', potion:'🧪', bot:'👾', runner:'🏃', brute:'🦍',
   spider:'🕷️', ghost:'👻', bat:'🦇', tank:'🐢', custom:'🎨' };
-/* --- custom mob (not saved; one at a time, loaded as spawner-gun ammo) --- */
-S.customEnemy = null;   // {type, speed, hp, dmg} once configured
-S.customDraft = null;   // working copy while the customize UI is open
-S.panelMode = null;     // VR spawn panel: null | 'custom'
+S.customEnemy = null;
+S.customDraft = null;
+S.panelMode = null;
 
-/* ============================== Customize mob ============================== */
 function customDraftInit(){
   const base = S.customEnemy || { type:'bot', speed:3, hp:3, dmg:10 };
   const T = ENEMY_TYPES[base.type] || ENEMY_TYPES.bot;
@@ -1159,8 +1287,6 @@ $('cz-dmg').oninput   = e=>{ if (S.customDraft){ S.customDraft.dmg = +e.target.v
 $('cz-load').onclick = applyCustom;
 $('cz-cancel').onclick = closeCustomize;
 function placeSpawnerGun(){
-  // PC: gun floats by the camera. VR: gun rides the right hand's laser pointer,
-  // so the model, the laser, and the spawn ray all agree.
   if (S.xr){
     ctrl[1].add(spawner);
     spawner.position.set(0, -0.03, -0.1);
@@ -1208,7 +1334,6 @@ function clearAll(){
   S.props.length = 0; S.enemies.length = 0; S.shots.length = 0; S.rockets.length = 0;
   dropHeld(); updateHUD();
 }
-/* --- radial spawn wheel (Downshot style) --- */
 const SVGNS = 'http://www.w3.org/2000/svg';
 function polarPt(cx, cy, r, deg){
   const a = (deg - 90) * Math.PI / 180;
@@ -1235,7 +1360,6 @@ function renderMenu(){
   let hubDefault = catNames[S.menuCat];
   for (const [kind, label] of items)
     if (S.equipped === 'spawner' && kind === S.ammo) hubDefault = label;
-  // two thin white concentric rings, milky translucent fill (Downshot wheel)
   svg.appendChild(svgEl('circle', { cx, cy, r:R1, fill:'rgba(238,243,250,.07)', stroke:'rgba(255,255,255,.8)', 'stroke-width':2 }));
   svg.appendChild(svgEl('circle', { cx, cy, r:R0, fill:'none', stroke:'rgba(255,255,255,.8)', 'stroke-width':2 }));
   const hubName = svgEl('text', { x:cx, y:cy, 'text-anchor':'middle', fill:'#fff',
@@ -1272,11 +1396,9 @@ function renderMenu(){
       svg.appendChild(nt);
     }
   });
-  // hub on top
   svg.appendChild(svgEl('circle', { cx, cy, r:R0-8, fill:'rgba(10,16,24,.66)', stroke:'rgba(255,255,255,.8)', 'stroke-width':2 }));
   hubName.textContent = hubDefault;
   svg.appendChild(hubName); svg.appendChild(hubSub);
-  // category pills under the wheel
   const cats = $('wheelcats'); cats.innerHTML = '';
   for (const cat of Object.keys(MENU)){
     const b = document.createElement('button');
@@ -1317,7 +1439,44 @@ $('lm-speed').onclick = ()=>{
   S.settings.speed = SPEED_STEPS[(i+1) % SPEED_STEPS.length];
   sfx.power(); renderLobbyMenu();
 };
-// Host / Join Lobby intentionally do nothing (coming soon)
+
+/* --- Host & Join UI bindings --- */
+$('lm-host').onclick = ()=>{
+  toggleLobbyMenu(false);
+  $('host-modal').classList.remove('hidden');
+};
+$('host-cancel').onclick = ()=>{
+  $('host-modal').classList.add('hidden');
+};
+$('host-confirm').onclick = ()=>{
+  const mapName = $('host-map-select').value;
+  $('host-modal').classList.add('hidden');
+  isHost = true;
+  loadMap(mapName);
+  const code = 'knd-' + Math.floor(1000 + Math.random() * 9000);
+  initPeer(code);
+};
+$('host-close-info').onclick = ()=>{
+  $('host-active-modal').classList.add('hidden');
+};
+
+$('lm-join').onclick = ()=>{
+  toggleLobbyMenu(false);
+  $('join-modal').classList.remove('hidden');
+};
+$('join-cancel').onclick = ()=>{
+  $('join-modal').classList.add('hidden');
+};
+$('join-confirm').onclick = ()=>{
+  const code = $('join-code-input').value.trim();
+  if (!code){ toast('⚠️ Please enter a valid room code'); return; }
+  $('join-modal').classList.add('hidden');
+  isHost = false;
+  initPeer();
+  toast('🌐 Connecting to room ' + code + '...');
+  conn = peer.connect(code);
+  setupConnection();
+};
 
 /* ============================== PC input ============================== */
 const keys = {};
@@ -1366,7 +1525,7 @@ function spawnAimFrom(o, d, kind){
                      : new THREE.Vector3(0,1,0);
     p = h.point.clone().addScaledVector(n, radius + 0.08);
   } else {
-    p = o.clone().addScaledVector(d, 12);   // aiming at the sky: spawn mid-air ahead
+    p = o.clone().addScaledVector(d, 12);
   }
   p.x = Math.max(-S.bounds, Math.min(S.bounds, p.x));
   p.z = Math.max(-S.bounds, Math.min(S.bounds, p.z));
@@ -1391,12 +1550,11 @@ function pickProp(maxDist=7){
 renderer.domElement.addEventListener('mousedown', e=>{
   if (!S.playing || S.xr) return;
   if (document.pointerLockElement !== renderer.domElement){
-    // click back into the game: close menus, re-engage pointer lock
     toggleMenu(false); toggleLobbyMenu(false);
     try{ renderer.domElement.requestPointerLock(); }catch(err){}
     return;
   }
-  if (e.button === 0){ // left click: shoot / grab / throw
+  if (e.button === 0){
     if (S.equipped === 'blaster'){
       const d = new THREE.Vector3(); camera.getWorldDirection(d);
       const o = new THREE.Vector3(); camera.getWorldPosition(o);
@@ -1443,7 +1601,6 @@ function stepPlayerPC(dt){
     f.normalize().applyAxisAngle(new THREE.Vector3(0,1,0), yaw);
     rig.position.addScaledVector(f, speed*dt);
   }
-  // jump + gravity
   playerVel.y -= 22*(S.gravity/9.8)*dt;
   if (onGround && keys['Space']){ playerVel.y = 7.5*S.scale; onGround = false; }
   rig.position.y += playerVel.y*dt;
@@ -1451,14 +1608,22 @@ function stepPlayerPC(dt){
   rig.position.x = Math.max(-S.bounds, Math.min(S.bounds, rig.position.x));
   rig.position.z = Math.max(-S.bounds, Math.min(S.bounds, rig.position.z));
   camera.position.y += ((1.7*S.scale) - camera.position.y) * Math.min(1, dt*6);
-  // held prop follows the hands
+
+  // Send transform to peer periodically
+  if (conn && conn.open){
+    const now = performance.now();
+    if (now - lastSendTime > 50){ // ~20fps sync rate
+      lastSendTime = now;
+      conn.send({ type: 'playerTransform', name: S.username, x: rig.position.x, y: rig.position.y, z: rig.position.z, ry: rig.rotation.y });
+    }
+  }
+
   if (S.held && S.held.grabbedBy === 'pc'){
     const o = new THREE.Vector3(); camera.getWorldPosition(o);
     const d = new THREE.Vector3(); camera.getWorldDirection(d);
     S.held.mesh.position.copy(o).addScaledVector(d, 1.7*S.scale).add(new THREE.Vector3(0,-0.25*S.scale,0));
     S.held.mesh.rotation.y += dt*2;
   }
-  // blaster recoil
   if (blasterKick > 0){ blasterKick = Math.max(0, blasterKick - dt*7);
     blaster.position.z = -0.55 + blasterKick*0.09; }
   else blaster.position.z = -0.55;
@@ -1480,15 +1645,13 @@ const laserMat = new THREE.LineBasicMaterial({ color:0x7cff00, transparent:true,
 ctrl.forEach((c, i)=>{
   const geo = new THREE.BufferGeometry().setFromPoints([ new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-4) ]);
   c.add(new THREE.Line(geo, laserMat));
-  // little controller nub so you can see your hands
   const nub = new THREE.Mesh(new THREE.SphereGeometry(0.045, 12, 10),
     new THREE.MeshStandardMaterial({ color:0x7cff00, roughness:.4 }));
   ctrlGrip[i].add(nub);
   rig.add(c); rig.add(ctrlGrip[i]);
-  c.visible = false; ctrlGrip[i].visible = false;   // hidden until a VR session starts
+  c.visible = false; ctrlGrip[i].visible = false;
 });
 
-/* --- floating 3D spawn panel (VR menu) --- */
 const panel = new THREE.Group();
 const panelCanvas = document.createElement('canvas');
 panelCanvas.width = 512; panelCanvas.height = 420;
@@ -1499,7 +1662,7 @@ const panelMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.95),
 panel.add(panelMesh);
 panel.visible = false;
 scene.add(panel);
-let panelHits = [];   // {x,y,w,h,kind}
+let panelHits = [];
 function drawPanel(){
   const c = panelCtx;
   c.clearRect(0,0,512,420);
@@ -1535,7 +1698,6 @@ function drawPanel(){
   c.fillText('trigger = spawn · B = close', 256, 392);
   panelTex.needsUpdate = true;
 }
-/* --- customize screen on the VR spawn panel --- */
 function drawCustomizePanel(c){
   const d = S.customDraft || { type:'bot', speed:3, hp:3, dmg:10 };
   c.fillText('🎨 CUSTOMIZE', 256, 40);
@@ -1613,7 +1775,6 @@ function toggleVRPanel(){
 const vrRay = new THREE.Raycaster();
 function vrPanelPress(c){
   if (!panel.visible) return false;
-  // ray from the controller along its -Z (pointing) direction
   const o = new THREE.Vector3(), d = new THREE.Vector3();
   c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
   vrRay.set(o, d);
@@ -1635,7 +1796,7 @@ function vrPanelPress(c){
   }
   return false;
 }
-/* --- floating 3D lobby menu panel (VR — not HTML UI) --- */
+
 const menuPanel = new THREE.Group();
 const menuCanvas = document.createElement('canvas');
 menuCanvas.width = 512; menuCanvas.height = 704;
@@ -1646,7 +1807,7 @@ const menuMesh = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 1.58),
 menuPanel.add(menuMesh);
 menuPanel.visible = false;
 scene.add(menuPanel);
-let menuHits = [];   // {x,y,w,h,kind}
+let menuHits = [];
 function drawVRMenu(){
   const c = menuCtx;
   c.clearRect(0,0,512,704);
@@ -1659,8 +1820,8 @@ function drawVRMenu(){
   menuHits = [];
   const rows = [
     { label:'🛠️ Spawner Gun', kind:'spawner' },
-    { label:'🖥️ Host (coming soon)', kind:'host' },
-    { label:'🌐 Join Lobby (coming soon)', kind:'join' },
+    { label:'🖥️ Host Game', kind:'host' },
+    { label:'🌐 Join Lobby', kind:'join' },
     { label:'🗺️ Change Map', kind:'maps' },
   ];
   if (S.menuMaps) for (const m of MAPS){ if (m.id !== 'lobby') rows.push({ label:'▶ ' + m.name + (S.map===m.id ? ' ✓' : ''), kind:'map:'+m.id }); }
@@ -1705,6 +1866,8 @@ function vrMenuPress(c){
   for (const h of menuHits){
     if (px >= h.x && px <= h.x+h.w && py >= h.y && py <= h.y+h.h){
       if (h.kind === 'spawner'){ equipSpawner(); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
+      else if (h.kind === 'host'){ menuPanel.visible = false; $('host-modal').classList.remove('hidden'); }
+      else if (h.kind === 'join'){ menuPanel.visible = false; $('join-modal').classList.remove('hidden'); }
       else if (h.kind === 'maps'){ S.menuMaps = !S.menuMaps; if (S.menuMaps) S.menuSettings = false; drawVRMenu(); beep(700,.05,'triangle',.08); }
       else if (h.kind.startsWith('map:')){ loadMap(h.kind.slice(4)); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
       else if (h.kind === 'back'){ loadMap('lobby'); menuPanel.visible = false; beep(760,.07,'triangle',.09); }
@@ -1715,7 +1878,6 @@ function vrMenuPress(c){
         S.settings.speed = SPEED_STEPS[(i+1) % SPEED_STEPS.length];
         sfx.power(); drawVRMenu();
       }
-      // host / join: coming soon — intentionally do nothing
       return true;
     }
   }
@@ -1733,11 +1895,11 @@ function edgePressed(c, idx){
 ctrl.forEach((c, i)=>{
   c.userData.i = i;
   c.addEventListener('connected', e=>{ c.userData.gamepad = e.data.gamepad; });
-  c.addEventListener('selectstart', ()=>{           // trigger
+  c.addEventListener('selectstart', ()=>{
     if (!S.xr) return;
     if (vrPanelPress(c)) return;
     if (vrMenuPress(c)) return;
-    if (i === 1){ // right hand shoots / spawns
+    if (i === 1){
       const o = new THREE.Vector3(), d = new THREE.Vector3();
       c.getWorldPosition(o); c.getWorldDirection(d); d.negate();
       if (S.equipped === 'spawner') spawnAimFrom(o, d, S.ammo);
@@ -1746,7 +1908,7 @@ ctrl.forEach((c, i)=>{
       else fireShot(o, d);
     }
   });
-  c.addEventListener('squeezestart', ()=>{          // grip: grab
+  c.addEventListener('squeezestart', ()=>{
     if (!S.xr) return;
     const cp = new THREE.Vector3(); c.getWorldPosition(cp);
     let best = null, bd = 1.4;
@@ -1760,7 +1922,7 @@ ctrl.forEach((c, i)=>{
       else { best.grabbedBy = c; best.vel.set(0,0,0); sfx.grab(); }
     }
   });
-  c.addEventListener('squeezeend', ()=>{            // release grip: throw
+  c.addEventListener('squeezeend', ()=>{
     if (!S.xr) return;
     for (const p of S.props){
       if (p.grabbedBy === c){
@@ -1778,14 +1940,12 @@ ctrl.forEach((c, i)=>{
 });
 let snapReady = true;
 function stepVR(dt){
-  // track controller velocity for throws
   for (const c of ctrl){
     const now = new THREE.Vector3(); c.getWorldPosition(now);
     c.userData.prevPos = c.userData.prevPos || now.clone();
     c.userData.framePos = now;
   }
   const L = ctrl[0].userData.gamepad, R = ctrl[1].userData.gamepad;
-  // left thumbstick: smooth locomotion, relative to headset yaw
   if (L && L.axes.length >= 4){
     const ax = L.axes[2], az = L.axes[3];
     if (Math.abs(ax) > 0.12 || Math.abs(az) > 0.12){
@@ -1797,17 +1957,13 @@ function stepVR(dt){
       rig.position.addScaledVector(rgt, ax * 5 * S.scale * dt);
     }
   }
-  // right thumbstick: snap turn
   if (R && R.axes.length >= 4){
     const sx = R.axes[2];
     if (Math.abs(sx) > 0.6 && snapReady){ rig.rotation.y -= Math.sign(sx) * Math.PI/6; snapReady = false; }
     if (Math.abs(sx) < 0.3) snapReady = true;
   }
-  // B button (index 5) toggles spawn panel
   if (edgePressed(ctrl[1], 5)) toggleVRPanel();
-  // A button (index 4) toggles lobby menu panel
   if (edgePressed(ctrl[1], 4)) toggleVRMenu();
-  // held props follow their controller
   for (const p of S.props){
     if (p.grabbedBy && p.grabbedBy.isObject3D){
       const c = p.grabbedBy;
@@ -1817,12 +1973,10 @@ function stepVR(dt){
     }
   }
   for (const c of ctrl) c.userData.prevPos.copy(c.userData.framePos);
-  // VR player position = rig + headset offset (xz)
   rig.position.x = Math.max(-S.bounds, Math.min(S.bounds, rig.position.x));
   rig.position.z = Math.max(-S.bounds, Math.min(S.bounds, rig.position.z));
 }
 
-/* ============================== session / start ============================== */
 function startPlay(){
   if (S.playing) return;
   S.playing = true;
@@ -1834,7 +1988,6 @@ function startPlay(){
   renderMenu();
   updateHUD();
   try{ renderer.domElement.requestPointerLock(); }catch(e){}
-  // starter props so the arena isn't empty (infinite map stays empty)
   if (S.map !== 'infinite') ['box','ball','barrel','cone'].forEach((k,i)=>{
     setTimeout(()=> addPropQuiet(k, i), 200 + i*150);
   });
@@ -1869,7 +2022,7 @@ renderer.xr.addEventListener('sessionend', ()=>{
   dropHeld();
   for (const p of S.props) if (p.grabbedBy && p.grabbedBy.isObject3D) p.grabbedBy = null;
   $('hud').classList.remove('hidden');
-  $('cross').classList.remove('hidden');
+  $('cross').classList.add('hidden');
   $('menubtn').classList.remove('hidden');
   $('lobbybtn').classList.remove('hidden');
   menuPanel.visible = false;
@@ -1881,9 +2034,8 @@ renderer.xr.addEventListener('sessionend', ()=>{
   renderMenu();
 });
 
-loadMap('lobby');   // start in the lobby
+loadMap('lobby');
 
-/* ============================== main loop ============================== */
 const clock = new THREE.Clock();
 const tmpV = new THREE.Vector3();
 renderer.setAnimationLoop(()=>{
@@ -1894,7 +2046,6 @@ renderer.setAnimationLoop(()=>{
     camera.getWorldPosition(tmpV);
     stepEnemies(dt, tmpV);
     if (S.xr) stepVR(dt); else stepPlayerPC(dt);
-    // infinite map: ground follows the player
     if (S.map === 'infinite' && followGround){
       const sx = Math.round(rig.position.x/4)*4, sz = Math.round(rig.position.z/4)*4;
       followGround.position.set(sx, 0, sz);
