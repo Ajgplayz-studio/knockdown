@@ -1479,6 +1479,13 @@ addEventListener('keydown', e=>{
   if (e.code === 'KeyQ'){ S.equipped === 'spawner' ? uiSpawn('hands') : uiSpawn('spawner'); }
   if (e.code === 'KeyE') toggleMenu();
   if (e.code === 'Tab'){ e.preventDefault(); toggleLobbyMenu(); }
+  if (e.code === 'ShiftRight' && !e.repeat) firePC(); // shoot without pointer lock (Canva embed)
+  // arrow keys turn the view (no pointer lock, e.g. Canva embed); leave them
+  // alone when a control has focus so sliders keep their native arrows.
+  if (e.code.startsWith('Arrow')){
+    const t = e.target;
+    if (!t || (t.tagName !== 'INPUT' && t.tagName !== 'SELECT' && t.tagName !== 'TEXTAREA')) e.preventDefault();
+  }
   if (e.code === 'Digit1') uiSpawn('hands');
   if (e.code === 'Digit2') uiSpawn('blaster');
   if (e.code === 'Digit3') uiSpawn('scatter');
@@ -1540,6 +1547,46 @@ function pickProp(maxDist=7){
   if (!hits.length || hits[0].distance > maxDist) return null;
   return S.props.find(p=> p.mesh === hits[0].object);
 }
+// shoot / grab / throw: left click when pointer-locked, or Right Shift when
+// pointer lock is unavailable (e.g. embedded in Canva) — same action, and it
+// never fires while a menu or the gun/mob customizer is open.
+function firePC(){
+  if (!S.playing || S.xr) return;
+  if (!$('menu').classList.contains('hidden')) return;
+  if (!$('lobbymenu').classList.contains('hidden')) return;
+  if (!$('customize').classList.contains('hidden') || !$('customize-gun').classList.contains('hidden')) return;
+  if (S.equipped === 'blaster'){
+    const d = new THREE.Vector3(); camera.getWorldDirection(d);
+    const o = new THREE.Vector3(); camera.getWorldPosition(o);
+    const gs = gunStats('blaster');
+    if (gunFireReady()){ fireShot(o, d, gs.speed, gs.color, 2.5, gs.dmg); blasterKick = 1; }
+  } else if (S.equipped === 'scatter'){
+    const d = new THREE.Vector3(); camera.getWorldDirection(d);
+    const o = new THREE.Vector3(); camera.getWorldPosition(o);
+    const gs = gunStats('scatter');
+    if (gunFireReady()){ fireScatter(o, d, gs.dmg, gs.speed, gs.color); scatterKick = 1; }
+  } else if (S.equipped === 'rocket'){
+    const d = new THREE.Vector3(); camera.getWorldDirection(d);
+    const o = new THREE.Vector3(); camera.getWorldPosition(o);
+    const gs = gunStats('rocket');
+    if (gunFireReady()){ fireRocket(o, d, gs.dmg, gs.speed, gs.color); rocketKick = 1; }
+  } else if (S.equipped === 'spawner'){
+    spawnAim(S.ammo);
+    spawnerKick = 1;
+  } else if (S.held){
+    const d = new THREE.Vector3(); camera.getWorldDirection(d);
+    S.held.grabbedBy = null;
+    S.held.vel.copy(d).multiplyScalar(17 * S.scale);
+    S.held.vel.y += 2.5;
+    S.held = null; sfx.grab();
+  } else {
+    const p = pickProp();
+    if (p){
+      if (p.kind === 'potion'){ drinkPotion(p); }
+      else { p.grabbedBy = 'pc'; S.held = p; p.vel.set(0,0,0); sfx.grab(); }
+    }
+  }
+}
 renderer.domElement.addEventListener('mousedown', e=>{
   if (!S.playing || S.xr) return;
   if (document.pointerLockElement !== renderer.domElement){
@@ -1548,46 +1595,24 @@ renderer.domElement.addEventListener('mousedown', e=>{
     try{ renderer.domElement.requestPointerLock(); }catch(err){}
     return;
   }
-  if (e.button === 0){ // left click: shoot / grab / throw
-    if (S.equipped === 'blaster'){
-      const d = new THREE.Vector3(); camera.getWorldDirection(d);
-      const o = new THREE.Vector3(); camera.getWorldPosition(o);
-      const gs = gunStats('blaster');
-      if (gunFireReady()){ fireShot(o, d, gs.speed, gs.color, 2.5, gs.dmg); blasterKick = 1; }
-    } else if (S.equipped === 'scatter'){
-      const d = new THREE.Vector3(); camera.getWorldDirection(d);
-      const o = new THREE.Vector3(); camera.getWorldPosition(o);
-      const gs = gunStats('scatter');
-      if (gunFireReady()){ fireScatter(o, d, gs.dmg, gs.speed, gs.color); scatterKick = 1; }
-    } else if (S.equipped === 'rocket'){
-      const d = new THREE.Vector3(); camera.getWorldDirection(d);
-      const o = new THREE.Vector3(); camera.getWorldPosition(o);
-      const gs = gunStats('rocket');
-      if (gunFireReady()){ fireRocket(o, d, gs.dmg, gs.speed, gs.color); rocketKick = 1; }
-    } else if (S.equipped === 'spawner'){
-      spawnAim(S.ammo);
-      spawnerKick = 1;
-    } else if (S.held){
-      const d = new THREE.Vector3(); camera.getWorldDirection(d);
-      S.held.grabbedBy = null;
-      S.held.vel.copy(d).multiplyScalar(17 * S.scale);
-      S.held.vel.y += 2.5;
-      S.held = null; sfx.grab();
-    } else {
-      const p = pickProp();
-      if (p){
-        if (p.kind === 'potion'){ drinkPotion(p); }
-        else { p.grabbedBy = 'pc'; S.held = p; p.vel.set(0,0,0); sfx.grab(); }
-      }
-    }
-  }
+  if (e.button === 0) firePC(); // left click: shoot / grab / throw
 });
 let blasterKick = 0, spawnerKick = 0, scatterKick = 0, rocketKick = 0;
 
 const playerVel = new THREE.Vector3();
 let onGround = true;
 function stepPlayerPC(dt){
-  const speed = (keys['ShiftLeft']||keys['ShiftRight'] ? 9.5 : 6) * S.scale;
+  // arrow-key look (works without pointer lock, e.g. embedded in Canva):
+  // Left/Right turn, Up/Down pitch, same directions as mouse look.
+  const look = 2.2 * dt;
+  if (keys['ArrowLeft']) yaw += look;
+  if (keys['ArrowRight']) yaw -= look;
+  if (keys['ArrowUp']) pitch += look;
+  if (keys['ArrowDown']) pitch -= look;
+  pitch = Math.max(-1.45, Math.min(1.45, pitch));
+  rig.rotation.y = yaw;
+  camera.rotation.x = pitch;
+  const speed = (keys['ShiftLeft'] ? 9.5 : 6) * S.scale; // Left Shift sprints; Right Shift shoots
   const f = new THREE.Vector3(
     (keys['KeyD']?1:0)-(keys['KeyA']?1:0), 0,
     (keys['KeyS']?1:0)-(keys['KeyW']?1:0));
