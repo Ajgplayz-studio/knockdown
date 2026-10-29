@@ -250,6 +250,7 @@ const sfx = {
   boom(){ beep(90, .3, 'sawtooth', .2); setTimeout(()=>beep(55,.45,'sawtooth',.18), 80); },
   thud(v){ beep(Math.max(55, Math.min(150, 60 + v*6)), .12, 'sine', .18); },
   die(r){ const f = Math.max(180, 520 - r*260); beep(f, .07, 'square', .12); setTimeout(()=>beep(f*1.5,.09,'square',.1), 60); },
+  step(f){ beep(f || 500, .04, 'triangle', .045); },
 };
 
 /* ============================== renderer / scene ============================== */
@@ -721,7 +722,7 @@ function makeEnemy(type, at, ov){
   }
   g.position.set(p.x, r, p.z);
   scene.add(g);
-  const bot = { mesh:g, body, t:Math.random()*10, r, type, icon:T.icon,
+  const bot = { mesh:g, body, t:Math.random()*10, stepT:Math.random()*0.5, r, type, icon:T.icon,
     speed: ov && ov.speed != null ? +ov.speed : T.speed[0] + Math.random()*(T.speed[1]-T.speed[0]),
     dmg: ov && ov.dmg != null ? Math.max(0, ov.dmg|0) : T.dmg,
     hp: ov && ov.hp != null ? Math.max(1, ov.hp|0) : T.hp,
@@ -904,6 +905,7 @@ const rocketgun = new THREE.Group();
 
 /* ============================== physics step ============================== */
 let lastThudAt = 0;
+let lastStepAt = 0;
 function stepProps(dt){
   const g = S.gravity;
   for (const p of S.props){
@@ -1058,6 +1060,16 @@ function stepEnemies(dt, playerPos){
       e.mesh.position.y = e.r + Math.abs(Math.sin(e.t*7))*0.28;
     }
     e.mesh.rotation.y = Math.atan2(to.x, to.z);
+    // movement noise: soft steps while closing in, throttled
+    if (!S.xr && dist > 0.5 && dist < 20){
+      e.stepT += dt;
+      const stepEvery = Math.max(0.28, Math.min(0.8, 2.2 / e.speed));
+      if (e.stepT >= stepEvery){
+        e.stepT = 0;
+        const now = performance.now();
+        if (now - lastStepAt > 90){ lastStepAt = now; sfx.step(Math.round(700 - e.r*300)); }
+      }
+    }
     // bump + damage the player when close
     if (dist < 1.8 + e.r){
       if (!S.xr){
